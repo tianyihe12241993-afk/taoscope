@@ -109,16 +109,39 @@ Fresh instances start with no history. To carry it over:
 
 ```bash
 # on the old host
-./ops/taoscope backup                 # writes backup-YYYYMMDD-HHMM.sql.gz
+./ops/taoscope backup                 # writes backup-YYYYMMDD-HHMM.sql.gz (~3 GB for 3 weeks)
 scp backup-*.sql.gz new-host:~/taoscope/
-
-# on the new host, after `docker compose up -d db`
-gunzip -c backup-*.sql.gz | docker compose exec -T db psql -U taoscope -d taoscope
-docker compose up -d
 ```
 
-Restore into a database that has never run the backend, or the migration-created
-tables will collide with the dump's.
+On the new host, restore **before the backend has ever started** -- a database
+that already ran the migrations has tables that collide with the dump's:
+
+```bash
+docker compose up -d db                        # db only, NOT the backend
+psql() { docker compose exec -T db psql -U taoscope -d taoscope "$@"; }
+
+psql -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
+psql -c "SELECT timescaledb_pre_restore();"    # required: see below
+gunzip -c backup-*.sql.gz | psql
+psql -c "SELECT timescaledb_post_restore();"
+
+docker compose up -d                           # now bring up the rest
+```
+
+The two `*_restore()` calls are not optional. The history lives in hypertables
+with continuous aggregates and compression policies, and a plain
+`psql < dump.sql` replays those catalog rows while Timescale's own triggers are
+live -- it fails partway and leaves a database that looks populated but has
+broken chunk metadata. `pre_restore` sets `timescaledb.restoring` on the
+database (so it survives across separate `psql` invocations) and `post_restore`
+clears it and re-arms the background jobs.
+
+Verify before trusting it:
+
+```bash
+psql -c "SELECT count(*) FROM timescaledb_information.hypertables;"   # expect 2
+psql -c "SELECT max(ts) FROM subnet_snapshot;"                       # the old host's last poll
+```
 
 ## 7. Day-to-day
 
