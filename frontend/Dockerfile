@@ -1,7 +1,9 @@
 FROM node:22-slim AS deps
 WORKDIR /app
-COPY package.json ./
-RUN npm install --no-audit --no-fund
+COPY package.json package-lock.json ./
+# npm ci, not npm install: the lockfile is committed precisely so a
+# rebuild resolves the same transitive tree the UI was built against.
+RUN npm ci --no-audit --no-fund
 
 FROM node:22-slim AS build
 WORKDIR /app
