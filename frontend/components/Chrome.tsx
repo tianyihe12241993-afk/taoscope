@@ -64,9 +64,12 @@ export function Chrome({
 
   return (
     <div className="min-h-screen">
+      {/* The header floats: translucent + blurred, so rows scroll through it
+          rather than under a slab. `.glass` falls back to the solid surface
+          where backdrop-filter is unsupported. */}
       <header
-        className="sticky top-0 z-50 flex items-stretch h-[54px] border-b"
-        style={{ background: "var(--surface-1)", borderColor: "var(--border)" }}
+        className="glass sticky top-0 z-50 flex items-stretch h-[54px] border-b"
+        style={{ borderColor: "var(--border)" }}
       >
         <Link
           href="/"
@@ -85,13 +88,18 @@ export function Chrome({
               <Link
                 key={n.href}
                 href={n.href}
-                className="relative flex items-center px-3.5 text-[12.5px] font-medium transition-colors"
+                className="relative flex items-center px-3.5 text-[12.5px] font-medium transition-colors hover:!text-[color:var(--text-primary)]"
                 style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
               >
                 {n.label}
                 <span
-                  className="absolute left-2 right-2 bottom-0 h-[2px] rounded-t-sm"
-                  style={{ background: active ? "var(--accent)" : "transparent" }}
+                  className="absolute left-2 right-2 bottom-0 h-[2px] rounded-t-sm transition-all duration-200"
+                  style={{
+                    background: active ? "var(--accent)" : "transparent",
+                    boxShadow: active
+                      ? "0 0 10px color-mix(in srgb, var(--accent) 65%, transparent)"
+                      : "none",
+                  }}
                   aria-hidden
                 />
               </Link>

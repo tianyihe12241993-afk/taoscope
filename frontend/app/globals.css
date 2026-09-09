@@ -64,8 +64,22 @@
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
   --shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
   --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
-  --radius: 6px;
-  --radius-sm: 4px;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --radius-lg: 14px;
+
+  /* --- glass & depth ---------------------------------------------------
+     The header floats over the content instead of sitting in a slab: a
+     translucent plane, blurred and slightly saturated, so scrolled rows
+     read THROUGH it. --hairline is the 1px top highlight that gives a
+     panel its lit edge; --glow is the ambient lift under a raised card. */
+  --glass: color-mix(in srgb, var(--surface-1) 68%, transparent);
+  --glass-blur: saturate(180%) blur(14px);
+  --hairline: rgba(255, 255, 255, 0.055);
+  --card-top: rgba(255, 255, 255, 0.022);
+  --glow: 0 1px 0 var(--hairline), 0 6px 20px -8px rgba(0, 0, 0, 0.75);
+  --glow-hover: 0 1px 0 rgba(255, 255, 255, 0.08), 0 10px 28px -8px rgba(0, 0, 0, 0.85);
+  --ring: color-mix(in srgb, var(--accent) 45%, transparent);
 
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", "JetBrains Mono",
                "Roboto Mono", Menlo, Consolas, "Liberation Mono", monospace;
@@ -113,6 +127,15 @@
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05);
   --shadow: 0 1px 3px rgba(16, 24, 40, 0.09), 0 1px 2px rgba(16, 24, 40, 0.05);
   --shadow-lg: 0 8px 24px rgba(16, 24, 40, 0.12), 0 2px 6px rgba(16, 24, 40, 0.06);
+
+  /* Light inverts the depth model: the lit edge is a white top face and the
+     lift is a soft grey shadow, not a glow. */
+  --glass: color-mix(in srgb, #ffffff 74%, transparent);
+  --hairline: rgba(16, 24, 40, 0.05);
+  --card-top: rgba(255, 255, 255, 0.9);
+  --glow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 6px 16px -10px rgba(16, 24, 40, 0.22);
+  --glow-hover: 0 1px 3px rgba(16, 24, 40, 0.08), 0 12px 24px -12px rgba(16, 24, 40, 0.3);
+  --ring: color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 html, body {
@@ -144,12 +167,35 @@ html, body {
   color: var(--text-muted);
 }
 
+/* A panel is a lit face, not a rectangle: a shallow top-to-bottom gradient,
+   a 1px highlight along its top edge, and an ambient lift underneath. The
+   gradient is deliberately tiny (~2%) -- enough to read as a surface catching
+   light, not enough to fight the data sitting on it. */
 .card {
-  background: var(--surface-1);
+  position: relative;
+  background:
+    linear-gradient(180deg, var(--card-top) 0%, transparent 42%),
+    var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  box-shadow: var(--glow);
 }
-:root[data-theme="light"] .card { box-shadow: var(--shadow-sm); }
+
+/* The floating plane used by the header and the sticky table head. Rows
+   scroll THROUGH it rather than under an opaque slab. The @supports guard
+   keeps a browser without backdrop-filter on a solid surface instead of a
+   translucent one it cannot blur. */
+.glass {
+  background: var(--surface-1);
+  border-color: var(--border);
+}
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .glass {
+    background: var(--glass);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+  }
+}
 
 .btn {
   border-radius: var(--radius-sm);
@@ -158,8 +204,33 @@ html, body {
   padding: 6px 13px;
   transition: background-color .12s ease, border-color .12s ease, color .12s ease;
 }
-.btn-primary { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
-.btn-primary:hover { filter: brightness(1.08); }
+.btn-primary {
+  background: linear-gradient(180deg,
+              color-mix(in srgb, var(--accent) 92%, #ffffff) 0%,
+              var(--accent) 100%);
+  color: var(--accent-ink);
+  font-weight: 600;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.18) inset,
+              0 4px 14px -6px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.btn-primary:hover {
+  filter: brightness(1.06);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.22) inset,
+              0 6px 18px -6px color-mix(in srgb, var(--accent) 85%, transparent);
+}
+.btn-primary:active { transform: translateY(0.5px); filter: brightness(0.98); }
+
+/* One visible focus treatment for everything reachable by keyboard. Mouse
+   users never see it (:focus-visible), so it costs the design nothing. */
+.btn:focus-visible,
+.input:focus-visible,
+a:focus-visible,
+button:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
 .btn-ghost {
   background: var(--surface-2);
   color: var(--text-secondary);
@@ -214,6 +285,9 @@ html, body {
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
 /* ---- dense data grid ------------------------------------------------- */
+/* The sticky head gets the same floating plane as the app header, so rows
+   pass THROUGH it on scroll. Opaque fallback first: a browser without
+   backdrop-filter must not end up with a see-through header over live rows. */
 table.dense th {
   position: sticky; top: 0; z-index: 10;
   background: var(--surface-1);
@@ -232,6 +306,13 @@ table.dense td {
   font-size: 12.5px;
 }
 table.dense tbody tr:last-child td { border-bottom: none; }
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  table.dense th {
+    background: var(--glass);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+  }
+}
 table.dense tbody tr:hover { background: var(--surface-hover); }
 
 /* Row tints on the subnet page: validators cyan, our own UIDs green, other
@@ -252,3 +333,40 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance
   cursor: pointer; border: 2px solid var(--surface-1); }
 input[type="range"]::-moz-range-thumb { width: 13px; height: 13px; border: 2px solid var(--surface-1);
   border-radius: 50%; background: var(--accent); cursor: pointer; }
+
+/* ---- motion ----------------------------------------------------------
+   The point of a live terminal is that you SEE the tick. A changed figure
+   flashes its own direction's colour and settles back; nothing moves
+   position, so a flashing row never shifts the row under the cursor. */
+@keyframes tick-flash-up {
+  0%   { background: color-mix(in srgb, var(--delta-up) 26%, transparent); }
+  100% { background: transparent; }
+}
+@keyframes tick-flash-down {
+  0%   { background: color-mix(in srgb, var(--delta-down) 26%, transparent); }
+  100% { background: transparent; }
+}
+.tick-up   { animation: tick-flash-up .75s ease-out; border-radius: var(--radius-sm); }
+.tick-down { animation: tick-flash-down .75s ease-out; border-radius: var(--radius-sm); }
+
+@keyframes skeleton-sweep {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg,
+              var(--surface-2) 25%,
+              var(--surface-hover) 37%,
+              var(--surface-2) 63%);
+  background-size: 200% 100%;
+  animation: skeleton-sweep 1.4s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+  color: transparent;
+}
+
+/* A vestibular trigger is not a style choice. Everything above degrades to
+   an instant state change when the viewer has asked for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  .tick-up, .tick-down, .skeleton { animation: none; }
+  * { scroll-behavior: auto !important; }
+}
