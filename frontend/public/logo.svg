@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="TaoScope">
+  <!-- TaoScope: a scope reticle around the tau. Navy ground, accent ring, white glyph. -->
+  <rect width="512" height="512" rx="112" fill="#0f172a"/>
+  <g fill="none" stroke="#3b82f6" stroke-width="26" stroke-linecap="round">
+    <circle cx="256" cy="256" r="196"/>
+    <path d="M256 24V96M256 416v72M24 256h72M416 256h72"/>
+  </g>
+  <g fill="none" stroke="#ffffff" stroke-width="48" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M150 182h212"/>
+    <path d="M258 182v114c0 44 32 60 68 54"/>
+  </g>
+</svg>

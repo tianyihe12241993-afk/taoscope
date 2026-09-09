@@ -1,0 +1,99 @@
+services:
+  db:
+    image: timescale/timescaledb-ha:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      PGDATA: /home/postgres/pgdata/data
+    volumes:
+      - taoscope_db:/home/postgres/pgdata/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # bound to loopback only: the database is never reachable from the internet
+    ports:
+      - "127.0.0.1:55432:5432"
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      TAOSCOPE_DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      TAOSCOPE_JWT_SECRET: ${TAOSCOPE_JWT_SECRET}
+      TAOSCOPE_ADMIN_EMAIL: ${TAOSCOPE_ADMIN_EMAIL}
+      TAOSCOPE_ADMIN_PASSWORD: ${TAOSCOPE_ADMIN_PASSWORD}
+      TAOSCOPE_NETWORK: ${TAOSCOPE_NETWORK}
+      TAOSCOPE_FAST_POLL: ${TAOSCOPE_FAST_POLL}
+      TAOSCOPE_SNAPSHOT_EVERY: ${TAOSCOPE_SNAPSHOT_EVERY}
+      TAOSCOPE_NEURON_POLL: ${TAOSCOPE_NEURON_POLL}
+      TAOSCOPE_PUBLIC_URL: ${TAOSCOPE_PUBLIC_URL}
+      TAOSCOPE_GOOGLE_CLIENT_ID: ${TAOSCOPE_GOOGLE_CLIENT_ID}
+      TAOSCOPE_GOOGLE_CLIENT_SECRET: ${TAOSCOPE_GOOGLE_CLIENT_SECRET}
+      TAOSCOPE_COOKIE_SECURE: ${TAOSCOPE_COOKIE_SECURE}
+      TAOSCOPE_ALLOWED_EMAILS: ${TAOSCOPE_ALLOWED_EMAILS}
+      TAOSCOPE_MAX_LOGIN_ATTEMPTS: ${TAOSCOPE_MAX_LOGIN_ATTEMPTS}
+      TAOSCOPE_TELEGRAM_BOT_TOKEN: ${TAOSCOPE_TELEGRAM_BOT_TOKEN}
+      TAOSCOPE_ANTHROPIC_API_KEY: ${TAOSCOPE_ANTHROPIC_API_KEY}
+      TAOSCOPE_OPENROUTER_API_KEY: ${TAOSCOPE_OPENROUTER_API_KEY}
+      TAOSCOPE_AI_MODEL: ${TAOSCOPE_AI_MODEL}
+      TAOSCOPE_AI_EFFORT: ${TAOSCOPE_AI_EFFORT}
+      TAOSCOPE_AI_DAILY_LIMIT: ${TAOSCOPE_AI_DAILY_LIMIT}
+      TAOSCOPE_COMP_ENABLED: ${TAOSCOPE_COMP_ENABLED:-true}
+      TAOSCOPE_GITHUB_TOKEN: ${TAOSCOPE_GITHUB_TOKEN:-}
+      # API credit monitoring — a provider with no key is skipped, never reported
+      TAOSCOPE_LIUM_API_KEY: ${TAOSCOPE_LIUM_API_KEY:-}
+      TAOSCOPE_LIUM_API_BASE: ${TAOSCOPE_LIUM_API_BASE:-https://lium.io/api}
+      TAOSCOPE_CHUTES_API_KEY: ${TAOSCOPE_CHUTES_API_KEY:-}
+      TAOSCOPE_PARALLEL_API_KEY: ${TAOSCOPE_PARALLEL_API_KEY:-}
+      TAOSCOPE_PARALLEL_OAUTH_TOKEN: ${TAOSCOPE_PARALLEL_OAUTH_TOKEN:-}
+      TAOSCOPE_VERCEL_API_TOKEN: ${TAOSCOPE_VERCEL_API_TOKEN:-}
+      TAOSCOPE_VERCEL_TEAM_ID: ${TAOSCOPE_VERCEL_TEAM_ID:-}
+      TAOSCOPE_CREDITS_PROVIDERS: ${TAOSCOPE_CREDITS_PROVIDERS:-lium,openrouter,chutes}
+      TAOSCOPE_CREDITS_POLL: ${TAOSCOPE_CREDITS_POLL:-900}
+      TAOSCOPE_CREDITS_THRESHOLDS: ${TAOSCOPE_CREDITS_THRESHOLDS:-100,50,20,10,5,1}
+    volumes:
+      # Read-only view of the mining workspace (override with TAOSCOPE_WORKSPACE
+      # on a host that keeps it elsewhere). Adapters read the submission
+      # ids we are actually running from the files the miner tooling writes,
+      # so nothing has to be re-entered by hand. Read-only on purpose: the
+      # web app must never be able to touch a run.
+      - ${TAOSCOPE_WORKSPACE:-/home/dev/work}:/work:ro
+    expose:
+      - "8000"
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - frontend
+      - backend
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS}
+    volumes:
+      - ./ops/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+
+volumes:
+  taoscope_db:
+  caddy_data:
+  caddy_config:

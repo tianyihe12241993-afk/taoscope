@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Small operator helper: ./ops/taoscope {status|logs|restart|backup|psql}
+set -euo pipefail
+cd "$(dirname "$0")/.."
+set -a; . ./.env; set +a
+
+case "${1:-status}" in
+  status)
+    docker compose ps --format "table {{.Service}}\t{{.Status}}"
+    echo
+    curl -s localhost/api/status | python3 -m json.tool 2>/dev/null || echo "backend not answering"
+    echo
+    docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+      "SELECT (SELECT count(*) FROM subnet_live) subnets,
+              (SELECT count(*) FROM neuron_live) neurons,
+              (SELECT count(DISTINCT coldkey) FROM neuron_live) operators,
+              pg_size_pretty(pg_database_size(current_database())) db;"
+    ;;
+  logs)    docker compose logs -f --tail=100 "${2:-backend}" ;;
+  restart) docker compose restart "${2:-}" ;;
+  psql)    docker compose exec db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" ;;
+  backup)
+    out="backup-$(date +%Y%m%d-%H%M).sql.gz"
+    docker compose exec -T db pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" | gzip > "$out"
+    echo "wrote $out ($(du -h "$out" | cut -f1))"
+    ;;
+  *) echo "usage: $0 {status|logs [svc]|restart [svc]|backup|psql}"; exit 1 ;;
+esac
