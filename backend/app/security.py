@@ -75,6 +75,18 @@ def _token_from(request: Request) -> str | None:
 
 
 def client_ip(request: Request) -> str:
+    """The peer address, as reported by the proxy.
+
+    Safe against a client spoofing its own X-Forwarded-For *because Caddy
+    replaces that header* with the real peer rather than appending to it:
+    ops/Caddyfile sets no `trusted_proxies`, and Caddy honours an inbound XFF
+    only from a trusted one (verified against caddy:2-alpine v2.11.4 -- a
+    request sent with "X-Forwarded-For: 1.2.3.4, 5.6.7.8" reaches the backend
+    as the peer address alone). This value is the throttle key in check_rate()
+    and the recorded ip in login_attempt and audit_log, so if anyone ever adds
+    `trusted_proxies`, publishes port 8000, or fronts this with another proxy,
+    revisit this function -- XFF becomes caller-controlled at that moment.
+    """
     fwd = request.headers.get("x-forwarded-for")
     if fwd:
         return fwd.split(",")[0].strip()

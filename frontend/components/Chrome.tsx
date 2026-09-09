@@ -16,6 +16,22 @@ const NAV = [
   { href: "/settings", label: "Settings" },
 ];
 
+/** An instrument readout: micro caption over a mono figure. */
+function Readout({ label, children, title }: {
+  label: string; children: React.ReactNode; title?: string;
+}) {
+  return (
+    <div className="hidden md:flex flex-col items-end leading-none gap-[3px]" title={title}>
+      <span className="label-micro" style={{ fontSize: 9 }}>{label}</span>
+      <span className="tnum text-[12.5px]" style={{ color: "var(--text-primary)" }}>{children}</span>
+    </div>
+  );
+}
+
+function Divider() {
+  return <span className="hidden md:block w-px h-7" style={{ background: "var(--border)" }} aria-hidden />;
+}
+
 export function Chrome({
   children, block, taoUsd, connected,
 }: {
@@ -24,11 +40,11 @@ export function Chrome({
   const path = usePathname();
   const router = useRouter();
   const { unit, toggle, setTaoUsd } = useCurrency();
-  const [theme, setTheme] = useState("light");
+  const [theme, setTheme] = useState("dark");
   const [me, setMe] = useState<any>(null);
 
   useEffect(() => {
-    setTheme(localStorage.getItem("taoscope-theme") || "light");
+    setTheme(localStorage.getItem("taoscope-theme") || "dark");
     api("/api/auth/me").then(setMe).catch(() => {});
   }, []);
 
@@ -49,78 +65,94 @@ export function Chrome({
   return (
     <div className="min-h-screen">
       <header
-        className="sticky top-0 z-50 flex items-center gap-1 px-7 h-[60px] border-b backdrop-blur"
-        style={{
-          background: "color-mix(in srgb, var(--surface-1) 88%, transparent)",
-          borderColor: "var(--border)",
-        }}
+        className="sticky top-0 z-50 flex items-stretch h-[54px] border-b"
+        style={{ background: "var(--surface-1)", borderColor: "var(--border)" }}
       >
-        <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight text-[15px] mr-4">
-          <Logo size={22} className="rounded-[5px]" />
+        <Link
+          href="/"
+          className="flex items-center gap-2 font-semibold tracking-tight text-[14px] pl-5 pr-4 shrink-0"
+        >
+          <Logo size={20} className="rounded-[4px]" />
           <span>Tao<span style={{ color: "var(--accent)" }}>Scope</span></span>
         </Link>
 
-        <nav className="flex items-center gap-0.5">
+        {/* Terminal tabs: the active view is marked by a lit rule on the bar's
+            own bottom edge, so the header reads as one continuous strip. */}
+        <nav className="flex items-stretch">
           {NAV.map((n) => {
             const active = n.href === "/" ? path === "/" : path.startsWith(n.href);
             return (
               <Link
                 key={n.href}
                 href={n.href}
-                className="px-3 py-1.5 rounded-lg text-[13px] font-medium transition-colors"
-                style={{
-                  background: active ? "var(--accent-soft)" : "transparent",
-                  color: active ? "var(--accent)" : "var(--text-secondary)",
-                }}
+                className="relative flex items-center px-3.5 text-[12.5px] font-medium transition-colors"
+                style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
               >
                 {n.label}
+                <span
+                  className="absolute left-2 right-2 bottom-0 h-[2px] rounded-t-sm"
+                  style={{ background: active ? "var(--accent)" : "transparent" }}
+                  aria-hidden
+                />
               </Link>
             );
           })}
         </nav>
 
-        <div className="ml-auto flex items-center gap-3 text-[12px]">
+        <div className="ml-auto flex items-center gap-3.5 pr-5">
+          {taoUsd ? <Readout label="TAO/USD" title="Spot TAO price in USD">${fmt(taoUsd, 2)}</Readout> : null}
+
+          {block ? (
+            <Readout label="Block" title="Latest finney block seen by the collector">
+              {block.toLocaleString()}
+            </Readout>
+          ) : null}
+
+          <Divider />
+
           <button
             onClick={toggle}
-            className="px-2.5 py-1 rounded-lg font-medium tnum"
-            style={{ background: "var(--surface-2)", color: "var(--text-secondary)" }}
+            className="tnum text-[11.5px] font-semibold px-2 py-[5px] rounded-[4px] transition-colors"
+            style={{
+              background: "var(--surface-2)",
+              color: "var(--text-secondary)",
+              border: "1px solid var(--border)",
+            }}
             title="Switch every value between TAO and USD"
           >
             {unit === "TAO" ? "τ TAO" : "$ USD"}
           </button>
 
-          {taoUsd ? (
-            <span className="tnum" style={{ color: "var(--text-muted)" }}>
-              TAO ${fmt(taoUsd, 2)}
-            </span>
-          ) : null}
-
-          {block ? (
-            <span className="tnum hidden lg:inline" style={{ color: "var(--text-muted)" }}>
-              #{block.toLocaleString()}
-            </span>
-          ) : null}
-
-          <span className="flex items-center gap-1.5" style={{ color: "var(--text-muted)" }}
-                title={connected ? "Live websocket connected" : "Reconnecting…"}>
-            <span className="inline-block w-[7px] h-[7px] rounded-full"
-                  style={{ background: connected ? "var(--good)" : "var(--critical)" }} aria-hidden />
-            {connected ? "live" : "offline"}
+          <span
+            className="flex items-center gap-1.5 label-micro"
+            style={{ fontSize: 9.5 }}
+            title={connected ? "Live websocket connected" : "Reconnecting…"}
+          >
+            <span className="live-dot" data-off={connected ? "false" : "true"} aria-hidden />
+            {connected ? "Live" : "Offline"}
           </span>
 
-          <button onClick={toggleTheme} className="opacity-60 hover:opacity-100 px-1" title="Theme">
+          <Divider />
+
+          <button
+            onClick={toggleTheme}
+            className="opacity-55 hover:opacity-100 transition-opacity text-[13px]"
+            title={theme === "dark" ? "Switch to light" : "Switch to dark"}
+          >
             {theme === "dark" ? "☀" : "☾"}
           </button>
 
-          <button onClick={logout}
-                  className="opacity-70 hover:opacity-100"
-                  title={me?.email}>
+          <button
+            onClick={logout}
+            className="text-[12px] opacity-70 hover:opacity-100 transition-opacity"
+            title={me?.email ? `Sign out — ${me.email}` : "Sign out"}
+          >
             {me?.display_name?.split(" ")[0] ?? "Sign out"}
           </button>
         </div>
       </header>
 
-      <main className="px-7 py-6 max-w-[1720px] mx-auto">{children}</main>
+      <main className="px-6 py-5 max-w-[1760px] mx-auto">{children}</main>
     </div>
   );
 }

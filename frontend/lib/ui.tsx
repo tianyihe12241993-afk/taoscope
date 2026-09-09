@@ -78,16 +78,17 @@ export function Toggle({ options, value, onChange }: {
   onChange: (v: string) => void;
 }) {
   return (
-    <div className="inline-flex p-0.5 rounded-lg" style={{ background: "var(--surface-2)" }}>
+    <div className="inline-flex p-[2px] rounded-[5px]"
+         style={{ background: "var(--surface-sunken)", border: "1px solid var(--border)" }}>
       {options.map((o) => (
         <button
           key={o.value}
           onClick={() => onChange(o.value)}
-          className="px-2.5 py-1 rounded-[7px] text-[12px] font-medium transition-colors"
+          className="px-2.5 py-[4px] rounded-[3px] text-[11.5px] font-medium transition-colors"
           style={{
-            background: value === o.value ? "var(--surface-1)" : "transparent",
+            background: value === o.value ? "var(--surface-2)" : "transparent",
             color: value === o.value ? "var(--text-primary)" : "var(--text-muted)",
-            boxShadow: value === o.value ? "var(--shadow-sm)" : "none",
+            boxShadow: value === o.value ? "inset 0 0 0 1px var(--border-strong)" : "none",
           }}
         >
           {o.label}
@@ -102,15 +103,19 @@ export function Pill({ tone = "neutral", children }: {
   children: React.ReactNode;
 }) {
   const map = {
-    neutral: ["var(--surface-2)", "var(--text-secondary)"],
-    good: ["color-mix(in srgb, var(--good) 14%, transparent)", "var(--delta-up)"],
-    warn: ["color-mix(in srgb, var(--warning) 18%, transparent)", "var(--serious)"],
-    bad: ["color-mix(in srgb, var(--critical) 14%, transparent)", "var(--delta-down)"],
-    accent: ["var(--accent-soft)", "var(--accent)"],
+    neutral: ["var(--surface-2)", "var(--text-secondary)", "var(--border)"],
+    good: ["color-mix(in srgb, var(--good) 15%, transparent)", "var(--delta-up)",
+           "color-mix(in srgb, var(--good) 34%, transparent)"],
+    warn: ["color-mix(in srgb, var(--warning) 16%, transparent)", "var(--serious)",
+           "color-mix(in srgb, var(--warning) 34%, transparent)"],
+    bad: ["color-mix(in srgb, var(--critical) 15%, transparent)", "var(--delta-down)",
+          "color-mix(in srgb, var(--critical) 34%, transparent)"],
+    accent: ["var(--accent-soft)", "var(--accent)",
+             "color-mix(in srgb, var(--accent) 34%, transparent)"],
   }[tone];
   return (
-    <span className="text-[11px] px-2 py-[3px] rounded-full font-medium"
-          style={{ background: map[0], color: map[1] }}>
+    <span className="text-[10.5px] px-[7px] py-[2px] rounded-[4px] font-semibold"
+          style={{ background: map[0], color: map[1], border: `1px solid ${map[2]}` }}>
       {children}
     </span>
   );

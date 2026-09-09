@@ -2,79 +2,117 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ---------------------------------------------------------------
-   Light is the default. Both themes are hand-tuned, not inverted.
-   The 8 categorical series hexes validate in BOTH modes (light on
-   #ffffff cards, dark on #1e2128) so identity never shifts on toggle.
-   --------------------------------------------------------------- */
+/* ═══════════════════════════════════════════════════════════════════════
+   TaoScope — trading-terminal theme.
+
+   DARK IS THE DEFAULT and the designed-for mode: a near-black plane with
+   panels lifted one step above it, hairline rules instead of shadows, and
+   every number set in tabular mono. Light is a hand-tuned alternate, not
+   an inversion.
+
+   The 8 categorical series hexes are the validated set from the data-viz
+   palette, stepped per mode (light on #ffffff cards, dark on #0f1218) —
+   both columns clear the lightness band, chroma floor, adjacent-pair CVD
+   separation, normal-vision floor and 3:1 contrast, so series identity
+   never shifts when the theme is toggled.
+   ═══════════════════════════════════════════════════════════════════════ */
+
 :root {
+  color-scheme: dark;
+
+  /* --- surfaces: plane < panel < raised --- */
+  --plane: #080a0d;
+  --surface-1: #0f1218;
+  --surface-2: #161b23;
+  --surface-hover: #151a22;
+  --surface-sunken: #0b0e13;
+  --border: #1e242e;
+  --border-strong: #2c3441;
+
+  --text-primary: #e6edf3;
+  --text-secondary: #8d9aab;
+  --text-muted: #616e7e;
+
+  --grid: #171c24;
+  --axis: #2c3441;
+
+  /* Cyan reads as "instrument", not "web app". --accent-ink is the text
+     that sits ON the accent: white on a bright cyan fill is unreadable. */
+  --accent: #22d3ee;
+  --accent-bright: #22d3ee;
+  --accent-ink: #04222b;
+  --accent-soft: #0d2b33;
+
+  /* Exchange conventions: these are status colors, never categorical
+     slots, and always ship beside a ▲/▼ glyph rather than color alone. */
+  --delta-up: #2ebd85;
+  --delta-down: #f6465d;
+  --good: #2ebd85;
+  --warning: #f0b90b;
+  --serious: #ff8a3c;
+  --critical: #f6465d;
+
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
+  --radius: 6px;
+  --radius-sm: 4px;
+
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", "JetBrains Mono",
+               "Roboto Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+:root[data-theme="light"] {
   color-scheme: light;
-  --plane: #f7f8fa;
+
+  --plane: #f4f6f9;
   --surface-1: #ffffff;
-  --surface-2: #f2f4f7;
-  --surface-hover: #f7f8fa;
-  --border: #e8eaef;
-  --border-strong: #d8dce4;
+  --surface-2: #f1f4f8;
+  --surface-hover: #f7f9fb;
+  --surface-sunken: #eef1f6;
+  --border: #e2e6ee;
+  --border-strong: #cfd6e2;
 
-  --text-primary: #1a1d24;
-  --text-secondary: #5c6270;
-  --text-muted: #8b91a1;
+  --text-primary: #10151c;
+  --text-secondary: #55606f;
+  --text-muted: #7d8797;
 
-  --grid: #eef0f4;
-  --axis: #d8dce4;
+  --grid: #eceff5;
+  --axis: #cfd6e2;
 
-  --accent: #2563eb;          /* text + buttons (5.2:1 on white) */
-  --accent-bright: #3b82f6;   /* marks and fills */
-  --accent-soft: #eff6ff;
+  --accent: #0e7490;
+  --accent-bright: #0891b2;
+  --accent-ink: #ffffff;
+  --accent-soft: #e0f5fa;
 
-  --delta-up: #047857;
-  --delta-down: #be123c;
-  --good: #10b981;
-  --warning: #f59e0b;
-  --serious: #f97316;
-  --critical: #ef4444;
+  --delta-up: #067647;
+  --delta-down: #c01048;
+  --good: #067647;
+  --warning: #b54708;
+  --serious: #c4320a;
+  --critical: #c01048;
 
-  --series-1: #3b82f6;
-  --series-2: #ea580c;
-  --series-3: #0d9488;
-  --series-4: #d97706;
-  --series-5: #ec4899;
-  --series-6: #16a34a;
-  --series-7: #8b5cf6;
-  --series-8: #ef4444;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #4a3aa7;
+  --series-8: #e34948;
 
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05);
   --shadow: 0 1px 3px rgba(16, 24, 40, 0.09), 0 1px 2px rgba(16, 24, 40, 0.05);
-  --shadow-lg: 0 8px 24px rgba(16, 24, 40, 0.10), 0 2px 6px rgba(16, 24, 40, 0.06);
-  --radius: 12px;
-}
-
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --plane: #16181d;
-  --surface-1: #1e2128;
-  --surface-2: #262a33;
-  --surface-hover: #242832;
-  --border: #2b2f38;
-  --border-strong: #363b45;
-
-  --text-primary: #f0f2f6;
-  --text-secondary: #9aa2b1;
-  --text-muted: #8b93a3;
-
-  --grid: #262a33;
-  --axis: #363b45;
-
-  --accent: #60a5fa;
-  --accent-bright: #60a5fa;
-  --accent-soft: #1e293b;
-
-  --delta-up: #34d399;
-  --delta-down: #fb7185;
-
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
-  --shadow: 0 1px 3px rgba(0, 0, 0, 0.40);
-  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 8px 24px rgba(16, 24, 40, 0.12), 0 2px 6px rgba(16, 24, 40, 0.06);
 }
 
 html, body {
@@ -82,86 +120,135 @@ html, body {
   color: var(--text-primary);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
+  font-feature-settings: "cv05" 1, "ss01" 1;
 }
 
-.tnum { font-variant-numeric: tabular-nums; }
+/* Every figure in the product is mono + tabular: columns of numbers line up
+   digit-for-digit, and a value changing on a live tick doesn't reflow. */
+.tnum {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.96em;
+  letter-spacing: -0.01em;
+}
+
+.mono { font-family: var(--font-mono); }
+
+/* Uppercase micro-label — the instrument-panel voice used for stat captions
+   and section headers. */
+.label-micro {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
 
 .card {
   background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
 }
+:root[data-theme="light"] .card { box-shadow: var(--shadow-sm); }
 
 .btn {
-  border-radius: 9px;
-  font-size: 13px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
   font-weight: 500;
-  padding: 7px 14px;
-  transition: background-color .13s ease, opacity .13s ease;
+  padding: 6px 13px;
+  transition: background-color .12s ease, border-color .12s ease, color .12s ease;
 }
-.btn-primary { background: var(--accent); color: #fff; }
-.btn-primary:hover { opacity: .9; }
-.btn-ghost { background: transparent; color: var(--text-secondary); border: 1px solid var(--border); }
-.btn-ghost:hover { background: var(--surface-2); color: var(--text-primary); }
+.btn-primary { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.btn-primary:hover { filter: brightness(1.08); }
+.btn-ghost {
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+.btn-ghost:hover { background: var(--surface-hover); color: var(--text-primary); border-color: var(--border-strong); }
 
 .input {
-  background: var(--surface-1);
+  background: var(--surface-sunken);
   border: 1px solid var(--border-strong);
   color: var(--text-primary);
-  border-radius: 9px;
-  padding: 7px 11px;
-  font-size: 13px;
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 12.5px;
   outline: none;
-  transition: border-color .13s ease, box-shadow .13s ease;
+  transition: border-color .12s ease, box-shadow .12s ease;
 }
 .input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
+.input::placeholder { color: var(--text-muted); }
 
 .chip {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--text-secondary);
+  border: 1px solid var(--border);
 }
 
-::-webkit-scrollbar { width: 11px; height: 11px; }
+/* Live indicator: a lit LED, not a dot. */
+.live-dot {
+  display: inline-block;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--good);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--good) 22%, transparent),
+              0 0 7px color-mix(in srgb, var(--good) 75%, transparent);
+}
+.live-dot[data-off="true"] {
+  background: var(--critical);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--critical) 22%, transparent),
+              0 0 7px color-mix(in srgb, var(--critical) 65%, transparent);
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 6px; border: 3px solid var(--surface-1); }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; border: 3px solid var(--surface-1); }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
+/* ---- dense data grid ------------------------------------------------- */
 table.dense th {
   position: sticky; top: 0; z-index: 10;
   background: var(--surface-1);
   color: var(--text-muted);
-  font-weight: 500;
-  font-size: 11.5px;
-  letter-spacing: 0.01em;
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.075em;
+  text-transform: uppercase;
   white-space: nowrap;
-  border-bottom: 1px solid var(--border);
-  padding-top: 10px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-strong);
+  padding-top: 9px; padding-bottom: 9px;
 }
-table.dense td { border-bottom: 1px solid var(--border); white-space: nowrap; }
+table.dense td {
+  border-bottom: 1px solid var(--grid);
+  white-space: nowrap;
+  font-size: 12.5px;
+}
 table.dense tbody tr:last-child td { border-bottom: none; }
 table.dense tbody tr:hover { background: var(--surface-hover); }
 
-/* Row tints on the subnet page: validators blue, our own UIDs green, other miners plain.
-   Painted on the cells so they survive the sticky header and the row hover. */
-table.dense tbody tr.row-validator td { background: color-mix(in srgb, var(--accent-bright) 8%, transparent); }
-table.dense tbody tr.row-validator:hover td { background: color-mix(in srgb, var(--accent-bright) 14%, transparent); }
-table.dense tbody tr.row-ours td { background: color-mix(in srgb, var(--good) 13%, transparent); }
-table.dense tbody tr.row-ours:hover td { background: color-mix(in srgb, var(--good) 20%, transparent); }
-table.dense tbody tr.row-ours td:first-child { box-shadow: inset 3px 0 0 var(--good); }
-.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: -1px; }
+/* Row tints on the subnet page: validators cyan, our own UIDs green, other
+   miners plain. Painted on the cells so they survive the sticky header and
+   the row hover. */
+table.dense tbody tr.row-validator td { background: color-mix(in srgb, var(--accent-bright) 9%, transparent); }
+table.dense tbody tr.row-validator:hover td { background: color-mix(in srgb, var(--accent-bright) 15%, transparent); }
+table.dense tbody tr.row-ours td { background: color-mix(in srgb, var(--good) 12%, transparent); }
+table.dense tbody tr.row-ours:hover td { background: color-mix(in srgb, var(--good) 19%, transparent); }
+table.dense tbody tr.row-ours td:first-child { box-shadow: inset 2px 0 0 var(--good); }
+.swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; }
 
 /* range sliders in the screener */
-input[type="range"] { -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px;
+input[type="range"] { -webkit-appearance: none; appearance: none; height: 3px; border-radius: 2px;
   background: var(--border-strong); outline: none; }
 input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none;
-  width: 15px; height: 15px; border-radius: 50%; background: var(--accent);
-  cursor: pointer; box-shadow: var(--shadow-sm); }
-input[type="range"]::-moz-range-thumb { width: 15px; height: 15px; border: none; border-radius: 50%;
-  background: var(--accent); cursor: pointer; }
+  width: 13px; height: 13px; border-radius: 50%; background: var(--accent);
+  cursor: pointer; border: 2px solid var(--surface-1); }
+input[type="range"]::-moz-range-thumb { width: 13px; height: 13px; border: 2px solid var(--surface-1);
+  border-radius: 50%; background: var(--accent); cursor: pointer; }
