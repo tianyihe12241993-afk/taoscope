@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ActivityFeed } from "@/components/ActivityFeed";
 import { Avatar } from "@/components/Avatar";
+import { BurnHistory, BurnSpark, burnChange } from "@/components/BurnSpark";
 import { Chrome } from "@/components/Chrome";
 import { ColumnPicker } from "@/components/ColumnPicker";
 import { PageHeader } from "@/components/PageHeader";
@@ -50,7 +51,7 @@ const PRESETS: { name: string; hint: string; c: Partial<Criteria> }[] = [
  *  hides these from the Columns picker; the choice persists per browser. */
 const COLUMN_ORDER = [
   "netuid", "name", "reg", "submission", "market_cap_tao", "emission_share", "miner_tao_per_day",
-  "burn", "best_miner_tao_per_day", "unique_coldkeys", "reward_per_operator", "pct_miners_earning",
+  "burn", "burn_trend", "best_miner_tao_per_day", "unique_coldkeys", "reward_per_operator", "pct_miners_earning",
   "payback_days", "uids", "links",
   // off by default
   "price", "earning_miners", "validator_count", "top_coldkey_pct", "age_days", "uids_free",
@@ -123,6 +124,7 @@ export default function Overview() {
   const [showFilters, setShowFilters] = useState(false);
   const [saved, setSaved] = useState<Row[]>([]);
   const [activePreset, setActivePreset] = useState<string | null>(null);
+  const [burnHist, setBurnHist] = useState<BurnHistory | null>(null);
   const { prefs, toggle: toggleCol, move: moveCol, reorder: reorderCol, reset: resetCols } =
     useColumnPrefs("taoscope-subnet-columns", COLUMN_ORDER, HIDDEN_BY_DEFAULT);
 
@@ -142,6 +144,14 @@ export default function Overview() {
     const t = setInterval(load, 60_000);
     return () => clearInterval(t);
   }, [load]);
+
+  // Burn history moves once per 15-minute sweep; no reason to ride the 60s poll.
+  useEffect(() => {
+    const get = () => api("/api/burn-history").then(setBurnHist).catch(() => {});
+    get();
+    const t = setInterval(get, 15 * 60_000);
+    return () => clearInterval(t);
+  }, []);
 
   // fast price ticks patch the slower screener payload
   const merged = useMemo(() => {
@@ -314,6 +324,24 @@ export default function Overview() {
             </span>
             <span className="tnum text-[11px] w-[8px]" style={{ color: "var(--warning)" }} aria-hidden>
               {disagree ? "≠" : ""}
+            </span>
+          </span>
+        );
+      } },
+    { key: "burn_trend", label: "Burn 30d", align: "right", width: 128,
+      title: "Burn over the last 30 days, on a fixed 0–100% scale shared by every row, so lines compare directly. The dot is the latest reading; gaps are periods with no data or no miner emission. Sorts by the change in points over the window — sort descending to find subnets that started burning.",
+      value: (r) => burnChange(burnHist?.series[String(r.netuid)]),
+      render: (r) => {
+        const values = burnHist?.series[String(r.netuid)];
+        const d = burnChange(values);
+        return (
+          // align-middle: an SVG has no text baseline, so an inline-flex box
+          // led by one sits on the SVG's bottom edge and floats above the row.
+          <span className="inline-flex items-center justify-end gap-2 align-middle">
+            <BurnSpark values={values} start={burnHist?.start ?? null} bucketHours={burnHist?.bucket_hours ?? 12} />
+            <span className="tnum text-[11px] w-[40px] text-right" style={{ color: "var(--text-secondary)" }}
+                  title={d === null ? undefined : "change in burn over the window, percentage points"}>
+              {d === null ? "" : Math.abs(d) < 0.5 ? "±0" : `${d > 0 ? "▲" : "▼"}${Math.abs(d).toFixed(0)}`}
             </span>
           </span>
         );

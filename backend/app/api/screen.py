@@ -126,6 +126,64 @@ class FilterIn(BaseModel):
     criteria: dict
 
 
+BURN_BUCKET_HOURS = 12
+BURN_DAYS = 30
+
+
+@router.get("/burn-history")
+async def burn_history(user=RequireUser):
+    """Per-subnet MinerBurned trend on ONE shared time grid.
+
+    Every series has the same length and the same bucket boundaries, so the
+    sparklines in the table are drawn on a common x-domain: a subnet with only
+    three days of data shows an empty left side rather than three days
+    stretched across the cell to look like a month.
+
+    A bucket is null when there is no sample in it, when every sample in it
+    says the subnet paid miners nothing (the chain stores 0 for that case, and
+    plotting it would draw a fall to 0% that never happened), or when it holds
+    only 0s from a period whose emission state we never observed.
+    """
+    rows = await pool().fetch(
+        """
+        WITH grid AS (
+            SELECT generate_series(
+                time_bucket(make_interval(hours => $1), now() - make_interval(days => $2)),
+                time_bucket(make_interval(hours => $1), now()),
+                make_interval(hours => $1)) AS b
+        ),
+        agg AS (
+            SELECT netuid, time_bucket(make_interval(hours => $1), ts) AS b,
+                   -- A burn above 0 proves miners had emission (withheld/total
+                   -- had a real denominator), so it stands even when `emitting`
+                   -- is unknown. A 0 is ambiguous -- the chain's 0/0 fallback
+                   -- looks identical -- so an unknown 0 is left as a gap
+                   -- rather than drawn as a claim.
+                   avg(miner_burned) FILTER (WHERE emitting IS TRUE
+                                             OR (emitting IS NULL AND miner_burned > 0)) AS v
+            FROM subnet_burn
+            WHERE ts >= (SELECT min(b) FROM grid)
+            GROUP BY 1, 2
+        )
+        SELECT n.netuid, array_agg(round((a.v * 100)::numeric, 2) ORDER BY g.b) AS pts
+        FROM (SELECT DISTINCT netuid FROM agg) n
+        CROSS JOIN grid g
+        LEFT JOIN agg a ON a.netuid = n.netuid AND a.b = g.b
+        GROUP BY n.netuid
+        """,
+        BURN_BUCKET_HOURS, BURN_DAYS,
+    )
+    start = await pool().fetchval(
+        "SELECT time_bucket(make_interval(hours => $1), now() - make_interval(days => $2))",
+        BURN_BUCKET_HOURS, BURN_DAYS,
+    )
+    return {
+        "bucket_hours": BURN_BUCKET_HOURS,
+        "start": start.isoformat() if start else None,
+        "series": {str(r["netuid"]): [None if x is None else float(x) for x in r["pts"]] for r in rows},
+    }
+
+
 @router.get("/filters")
 async def list_filters(user=RequireUser):
     rows = await pool().fetch(

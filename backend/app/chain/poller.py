@@ -215,6 +215,22 @@ async def _neuron_tick() -> None:
                 "UPDATE subnet_live SET miner_burned=$2 WHERE netuid=$1",
                 list(burned.items()),
             )
+            # History for the trend sparkline. `emitting` uses the same test as
+            # the Burn column (any miner emission at all), so a subnet that
+            # stopped paying miners drops out of the line instead of drawing a
+            # false fall to 0%.
+            by_net = {a["netuid"]: a for a in aggs}
+            block = hub.status.get("block")
+            await con.executemany(
+                "INSERT INTO subnet_burn (ts, netuid, block, miner_burned, owner_incentive_share,"
+                " emitting, source) VALUES ($1,$2,$3,$4,$5,$6,'sweep') ON CONFLICT DO NOTHING",
+                [
+                    (ts, netuid, block, v,
+                     by_net.get(netuid, {}).get("owner_incentive_share"),
+                     (by_net[netuid].get("miner_alpha_per_day") or 0) > 0 if netuid in by_net else None)
+                    for netuid, v in burned.items()
+                ],
+            )
         await con.executemany(_upsert_sql("neuron_live", NEURON_COLS, "netuid,uid"),
                               [[r[c] for c in NEURON_COLS] for r in neurons])
         # drop UIDs that no longer exist (subnet shrank / dereg)

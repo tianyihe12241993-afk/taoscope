@@ -79,6 +79,17 @@ boot is empty by design: the 12s chain poll fills the subnet tables within a
 minute, and the first full neuron sweep (~30k neurons, 6-10s) lands within
 15 minutes. History accumulates from that moment — it is not backfilled.
 
+### Fill the Burn trend history (once)
+
+The neuron sweep records `MinerBurned` from first boot onward, so the Burn 30d
+sparklines start empty. The chain keeps that storage, so read the past month from
+an archive node instead of waiting a month (~1 minute, safe to re-run):
+
+```bash
+docker compose run --rm -v "$PWD/backend/devtools:/srv/devtools:ro" backend \
+    python /srv/devtools/backfill_burn.py --days 31 --step-hours 6
+```
+
 ## 4. Verify
 
 ```bash
