@@ -50,7 +50,7 @@ const PRESETS: { name: string; hint: string; c: Partial<Criteria> }[] = [
  *  hides these from the Columns picker; the choice persists per browser. */
 const COLUMN_ORDER = [
   "netuid", "name", "reg", "submission", "market_cap_tao", "emission_share", "miner_tao_per_day",
-  "best_miner_tao_per_day", "unique_coldkeys", "reward_per_operator", "pct_miners_earning",
+  "burn", "best_miner_tao_per_day", "unique_coldkeys", "reward_per_operator", "pct_miners_earning",
   "payback_days", "uids", "links",
   // off by default
   "price", "earning_miners", "validator_count", "top_coldkey_pct", "age_days", "uids_free",
@@ -276,6 +276,45 @@ export default function Overview() {
           <span className="tnum font-medium"
                 title={`shared by ${r.earning_miners ?? 0} earning UID(s) · validators ${moneyCompact(r.validator_tao_per_day, 1)}/day · owner ${moneyCompact(r.owner_tao_per_day, 1)}/day`}>
             {moneyCompact(v, 1)}
+          </span>
+        );
+      } },
+    { key: "burn", label: "Burn", align: "right", width: 104,
+      title: "Share of miner emission the chain withheld from miners last tempo (SubtensorModule::MinerBurned). Incentive routed to the subnet owner's own hotkeys is burned or recycled, never paid — at 100% the 'Miners / day' pot reaches no miner at all. '—' means the subnet paid miners nothing last tempo, so there was nothing to burn.",
+      // null, not -1: Table sinks missing values in BOTH sort directions, so a
+      // subnet with no miner emission never tops an ascending "burns least" sort.
+      value: (r) => ((r.miner_tao_per_day ?? 0) > 0 && r.miner_burned != null) ? r.miner_burned * 100 : null,
+      render: (r) => {
+        const burned = r.miner_burned;
+        if (burned === null || burned === undefined || (r.miner_tao_per_day ?? 0) <= 0) {
+          return (
+            <span style={{ color: "var(--text-muted)" }}
+                  title="No miner emission last tempo — nothing to burn.">—</span>
+          );
+        }
+        const v = burned * 100;
+        const share = r.owner_incentive_share;
+        // The chain value is per tempo; the reconstruction is from the latest
+        // metagraph sweep. Where they disagree, show both rather than let the
+        // chain's number stand alone looking confident.
+        const disagree = share !== null && share !== undefined && Math.abs(share - burned) > 0.05;
+        const tone = v >= 50 ? "var(--delta-down)" : v >= 10 ? "var(--serious)" : "var(--delta-up)";
+        const tip = disagree
+          ? `Chain withheld ${v.toFixed(1)}% last tempo, but the owner's keys hold ${(share * 100).toFixed(1)}% of incentive in the latest sweep. They disagree here — read both.`
+          : `${v.toFixed(1)}% of last tempo's miner emission went to the owner's hotkeys and was burned or recycled` +
+            (share !== null && share !== undefined ? ` · owner keys hold ${(share * 100).toFixed(1)}% of incentive` : "");
+        return (
+          <span className="inline-flex items-center justify-end gap-2" title={tip}>
+            <span className="h-[5px] w-[30px] rounded-full overflow-hidden" style={{ background: "var(--surface-2)" }}>
+              <span className="block h-full rounded-full"
+                    style={{ width: `${Math.max(v > 0 ? 3 : 0, Math.min(100, v))}%`, background: tone }} />
+            </span>
+            <span className="tnum w-[44px] text-right" style={{ color: tone }}>
+              {v >= 99.95 ? "100%" : `${v.toFixed(1)}%`}
+            </span>
+            <span className="tnum text-[11px] w-[8px]" style={{ color: "var(--warning)" }} aria-hidden>
+              {disagree ? "≠" : ""}
+            </span>
           </span>
         );
       } },

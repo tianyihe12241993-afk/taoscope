@@ -42,7 +42,7 @@ AGG_COLS = [
     "validator_alpha_per_day", "emitted_alpha_per_day", "num_uids", "max_uids", "active_uids", "validator_count",
     "unique_coldkeys", "earning_coldkeys", "top_coldkey", "top_coldkey_pct",
     "top_coldkey_hotkeys",
-    "hhi", "burn_tao", "difficulty", "registration_allowed",
+    "hhi", "owner_incentive_share", "burn_tao", "difficulty", "registration_allowed",
     "pow_registration_allowed", "immunity_period", "max_validators",
     "activity_cutoff", "min_allowed_weights", "max_weights_limit",
     "weights_rate_limit", "weights_version", "commit_reveal_enabled",
@@ -186,6 +186,15 @@ async def _neuron_tick() -> None:
     mgs = await chain.all_metagraphs()
     ts = dt.datetime.now(dt.timezone.utc)
 
+    # MinerBurned is written once per tempo, so the 15-minute sweep samples it
+    # often enough. Auxiliary: a failed fetch leaves the stored values as they
+    # were rather than blanking them, and must never cost the metagraph sweep.
+    try:
+        burned = await chain.miner_burned()
+    except Exception:  # noqa: BLE001
+        log.exception("MinerBurned fetch failed — burn column not refreshed this sweep")
+        burned = {}
+
     aggs: list[dict] = []
     neurons: list[dict] = []
     for m in mgs:
@@ -201,6 +210,11 @@ async def _neuron_tick() -> None:
             + ", updated_at=now() WHERE netuid=$1",
             [[a[c] for c in AGG_COLS] for a in aggs],
         )
+        if burned:
+            await con.executemany(
+                "UPDATE subnet_live SET miner_burned=$2 WHERE netuid=$1",
+                list(burned.items()),
+            )
         await con.executemany(_upsert_sql("neuron_live", NEURON_COLS, "netuid,uid"),
                               [[r[c] for c in NEURON_COLS] for r in neurons])
         # drop UIDs that no longer exist (subnet shrank / dereg)

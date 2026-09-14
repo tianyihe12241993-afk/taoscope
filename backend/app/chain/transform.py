@@ -169,6 +169,22 @@ def neurons_from_metagraph(m) -> tuple[dict, list[dict]]:
             inc_by_ck[ck] += incentive[i]
     earning_ck = sum(1 for v in inc_by_ck.values() if v > 0)
 
+    # Incentive held by the owner's own keys: every UID whose coldkey is the
+    # owner coldkey, plus SubnetOwnerHotkey -- the set the chain's
+    # get_owner_hotkeys() builds, whose incentive is recycled or burned rather
+    # than paid. This is a reconstruction; the chain records its own number as
+    # MinerBurned, fetched separately. Kept side by side so a disagreement is
+    # visible instead of one of them being silently believed.
+    owner_ck = getattr(m, "owner_coldkey", None)
+    owner_hk = getattr(m, "owner_hotkey", None)
+    total_inc = sum(incentive)
+    owner_inc = sum(
+        incentive[i] for i in range(n)
+        if (owner_ck and i < len(coldkeys) and coldkeys[i] == owner_ck)
+        or (owner_hk and hotkeys[i] == owner_hk)
+    )
+    owner_incentive_share = (owner_inc / total_inc) if total_inc > 0 else None
+
     top_ck, top_em = (max(by_ck.items(), key=lambda kv: kv[1]) if by_ck else (None, 0.0))
     hhi = sum((v / total_em) ** 2 for v in by_ck.values()) if by_ck else 0.0
 
@@ -204,6 +220,7 @@ def neurons_from_metagraph(m) -> tuple[dict, list[dict]]:
         "top_coldkey_pct": (top_em / total_em * 100.0) if by_ck else 0.0,
         "top_coldkey_hotkeys": hk_count.get(top_ck, 0),
         "hhi": hhi,
+        "owner_incentive_share": owner_incentive_share,
         "burn_tao": to_f(getattr(m, "burn", None)),
         "difficulty": to_f(getattr(m, "difficulty", None)),
         "registration_allowed": bool(getattr(m, "registration_allowed", False)),
