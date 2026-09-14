@@ -29,6 +29,20 @@ export function burnChange(values: (number | null)[] | undefined): number | null
   return median(real.slice(-k)) - median(real.slice(0, k));
 }
 
+/** Below this many points either way, the burn counts as unchanged. The table's
+ *  change label uses the same threshold, so a coloured line never sits beside
+ *  "±0" and a neutral line never sits beside "▲3". */
+export const BURN_FLAT_PTS = 0.5;
+
+/** Line colour by direction. Rising burn is red and falling is green: for a
+ *  miner, more burn is the bad direction. Flat keeps the neutral ink. */
+function trendInk(d: number | null): { line: string; dot: string } {
+  if (d === null || Math.abs(d) < BURN_FLAT_PTS) return { line: "var(--text-secondary)", dot: "var(--accent)" };
+  return d > 0
+    ? { line: "var(--delta-down)", dot: "var(--delta-down)" }
+    : { line: "var(--delta-up)", dot: "var(--delta-up)" };
+}
+
 const W = 76;
 const H = 24;
 const PAD = 3;
@@ -36,13 +50,14 @@ const PAD = 3;
 /**
  * Burn % over time, drawn on a FIXED 0–100 domain.
  *
- * Not the generic <Spark>: that one min–max scales each row and colours by
- * direction. Auto-scaling would draw 99.0% -> 99.5% as a cliff and make rows
- * incomparable, and for burn "rising" is the bad direction, so green-for-up
- * would say the opposite of the truth. Here every row shares one scale and one
- * time grid, the line wears a neutral ink, and only the latest point carries
- * the accent. Gaps (no sample, or a subnet that paid miners nothing) break the
- * line instead of being bridged.
+ * Not the generic <Spark>: that one min–max scales each row (99.0% -> 99.5%
+ * would draw as a cliff, and rows stop being comparable) and colours rising
+ * green, which for burn is backwards. Here every row shares one scale and one
+ * time grid; the line is red when burn rose over the window, green when it
+ * fell, and neutral with an accent dot when it held. Direction comes from
+ * burnChange(), the same number the change label shows, and the ▲/▼ label
+ * beside it means the colour is never the only signal. Gaps (no sample, or a
+ * subnet that paid miners nothing) break the line instead of being bridged.
  */
 export function BurnSpark({ values, start, bucketHours }: {
   values: (number | null)[] | undefined; start: string | null; bucketHours: number;
@@ -87,6 +102,7 @@ export function BurnSpark({ values, start, bucketHours }: {
   };
 
   const hv = hover ? values[hover.i] : null;
+  const ink = trendInk(burnChange(values));
 
   return (
     <>
@@ -98,9 +114,9 @@ export function BurnSpark({ values, start, bucketHours }: {
         <line x1={PAD} x2={W - PAD} y1={y(100)} y2={y(100)} stroke="var(--grid)" strokeWidth={1} />
         <line x1={PAD} x2={W - PAD} y1={y(0)} y2={y(0)} stroke="var(--border-strong)" strokeWidth={1} />
         {runs.map((run, k) => run.length === 1 ? (
-          <circle key={k} cx={x(run[0].i)} cy={y(run[0].v)} r={1.5} fill="var(--text-secondary)" />
+          <circle key={k} cx={x(run[0].i)} cy={y(run[0].v)} r={1.5} fill={ink.line} />
         ) : (
-          <path key={k} fill="none" stroke="var(--text-secondary)" strokeWidth={1.75}
+          <path key={k} fill="none" stroke={ink.line} strokeWidth={1.75}
                 strokeLinejoin="round" strokeLinecap="round"
                 d={run.map((p, j) => `${j ? "L" : "M"}${x(p.i).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ")} />
         ))}
@@ -112,7 +128,7 @@ export function BurnSpark({ values, start, bucketHours }: {
                   stroke="var(--surface-1)" strokeWidth={1.5} />
         )}
         {lastIdx >= 0 && (
-          <circle cx={x(lastIdx)} cy={y(values[lastIdx] as number)} r={3} fill="var(--accent)"
+          <circle cx={x(lastIdx)} cy={y(values[lastIdx] as number)} r={3} fill={ink.dot}
                   stroke="var(--surface-1)" strokeWidth={1.5} />
         )}
       </svg>

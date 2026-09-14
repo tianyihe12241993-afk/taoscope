@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ActivityFeed } from "@/components/ActivityFeed";
 import { Avatar } from "@/components/Avatar";
-import { BurnHistory, BurnSpark, burnChange } from "@/components/BurnSpark";
+import { BURN_FLAT_PTS, BurnHistory, BurnSpark, burnChange } from "@/components/BurnSpark";
 import { Chrome } from "@/components/Chrome";
 import { ColumnPicker } from "@/components/ColumnPicker";
 import { PageHeader } from "@/components/PageHeader";
@@ -329,7 +329,7 @@ export default function Overview() {
         );
       } },
     { key: "burn_trend", label: "Burn 30d", align: "right", width: 128,
-      title: "Burn over the last 30 days, on a fixed 0–100% scale shared by every row, so lines compare directly. The dot is the latest reading; gaps are periods with no data or no miner emission. Sorts by the change in points over the window — sort descending to find subnets that started burning.",
+      title: "Burn over the last 30 days, on a fixed 0–100% scale shared by every row, so lines compare directly. Red = burn rose over the window, green = it fell, neutral = held. The dot is the latest reading; gaps are periods with no data or no miner emission. Sorts by the change in points over the window — sort descending to find subnets that started burning.",
       value: (r) => burnChange(burnHist?.series[String(r.netuid)]),
       render: (r) => {
         const values = burnHist?.series[String(r.netuid)];
@@ -341,7 +341,7 @@ export default function Overview() {
             <BurnSpark values={values} start={burnHist?.start ?? null} bucketHours={burnHist?.bucket_hours ?? 12} />
             <span className="tnum text-[11px] w-[40px] text-right" style={{ color: "var(--text-secondary)" }}
                   title={d === null ? undefined : "change in burn over the window, percentage points"}>
-              {d === null ? "" : Math.abs(d) < 0.5 ? "±0" : `${d > 0 ? "▲" : "▼"}${Math.abs(d).toFixed(0)}`}
+              {d === null ? "" : Math.abs(d) < BURN_FLAT_PTS ? "±0" : `${d > 0 ? "▲" : "▼"}${Math.abs(d).toFixed(0)}`}
             </span>
           </span>
         );
