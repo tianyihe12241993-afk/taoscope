@@ -14,6 +14,11 @@ Raw chain fields don't answer "is this worth mining", so two derived metrics do:
   payback_days         — registration burn divided by what a median EARNING
                          miner makes per day. How long a UID takes to repay
                          itself assuming you reach the earning cohort.
+
+Every miner figure here leaves out the subnet owner's own keys (IS_OWNER). On a
+subnet that routes its incentive to the owner, the owner's UID used to be the
+"top miner", the only "earning miner", and the whole miner pot -- none of which
+a competing miner can ever receive.
 """
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -28,23 +33,45 @@ router = APIRouter(prefix="/api", tags=["screen"])
 
 TAO_PER_DAY = "(n.emission * (7200.0 / NULLIF(s.tempo,0)) * s.price)"
 
+# The subnet owner's own keys: every UID whose coldkey is the owner coldkey, plus
+# SubnetOwnerHotkey -- the set subtensor's get_owner_hotkeys() builds. Incentive
+# sent there is burned or recycled (or, on a few subnets, paid to the owner), and
+# in no case reaches a miner, so none of it belongs in a miner figure. COALESCE
+# because an unknown owner must not turn `NOT IS_OWNER` into NULL and silently
+# drop every UID from a WHERE clause. Expects neuron_live `n` and subnet_live `s`.
+IS_OWNER = ("(COALESCE(n.coldkey = s.owner_coldkey, false)"
+            " OR COALESCE(n.hotkey = s.owner_hotkey, false))")
+
 SCREEN_SQL = f"""
 WITH miner AS (
-    -- Miner-role UIDs only (see roles.py: a validator is a UID receiving
-    -- dividends). `tpd` is the UID's share of the miner pool, the stable figure
-    -- the cohort statistics are built on; `actual` is the hotkey's own emission
-    -- valued at today's price, which is what the top-miner column shows.
+    -- Miner-role UIDs that are not the owner's keys (see roles.py: a validator
+    -- is a UID receiving dividends). `tpd` is the emission the hotkey was
+    -- actually paid last tempo, at today's price.
+    --
+    -- Emission, not incentive x pool: six subnets run two mechanisms
+    -- (MechanismCountCurrent: 44, 68, 87, 89, 93, 113 on 2026-09-17) and the
+    -- metagraph incentive vector is mechanism 0 only. On SN44 the emission
+    -- split is [0, 65535], so the owner held incentive 1.0 while the miners
+    -- actually paid held 0 -- an incentive-based figure called SN44's pot zero.
+    -- On single-mechanism subnets the two agree (88 subnets: pot median 0.01%,
+    -- p90 0.2%; top miner p90 0.06%).
     SELECT n.netuid, n.uid, n.hotkey,
-           n.incentive * COALESCE(s.miner_alpha_per_day,0) * s.price AS tpd,
-           {TAO_PER_DAY} AS actual
+           {TAO_PER_DAY} AS tpd
     FROM neuron_live n JOIN subnet_live s USING (netuid)
-    WHERE NOT {IS_VALIDATOR}
+    WHERE NOT {IS_VALIDATOR} AND NOT {IS_OWNER}
+),
+rivals AS (
+    -- coldkeys holding at least one UID that is not an owner key
+    SELECT n.netuid, count(DISTINCT n.coldkey) AS rivals
+    FROM neuron_live n JOIN subnet_live s USING (netuid)
+    WHERE n.coldkey IS NOT NULL AND NOT {IS_OWNER}
+    GROUP BY n.netuid
 ),
 top AS (
     -- best miner hotkey by its own emission; validator emission never enters
     SELECT DISTINCT ON (netuid) netuid, uid AS top_miner_uid, hotkey AS top_miner_hotkey,
-           actual AS best_miner_tao_per_day
-    FROM miner ORDER BY netuid, actual DESC, uid
+           tpd AS best_miner_tao_per_day
+    FROM miner ORDER BY netuid, tpd DESC, uid
 ),
 roles AS (
     SELECT n.netuid,
@@ -59,18 +86,26 @@ agg AS (
            100.0 * count(*) FILTER (WHERE tpd > 0)
                  / NULLIF(count(*),0)                 AS pct_miners_earning,
            percentile_cont(0.5) WITHIN GROUP (ORDER BY tpd)
-                 FILTER (WHERE tpd > 0)               AS median_earner_tao_per_day
+                 FILTER (WHERE tpd > 0)               AS median_earner_tao_per_day,
+           -- The miner pot, owner excluded: what the miners were actually paid.
+           -- Cross-checked against the chain on 2026-09-17: equals
+           -- pool x (1 - MinerBurned) within 5% of the pool on 125/125
+           -- emitting subnets, median gap 0.
+           sum(tpd)                                   AS miners_paid_tao_per_day
     FROM miner GROUP BY netuid
 )
 SELECT s.netuid, s.name, s.symbol, s.price, s.market_cap_tao, s.emission_share,
        s.realized_tao_per_hour * 24                     AS tao_per_day,
-       COALESCE(s.miner_alpha_per_day, 0) * s.price     AS miner_tao_per_day,
+       COALESCE(a.miners_paid_tao_per_day, 0)           AS miner_tao_per_day,
+       -- the gross pool, owner's share included; only for "did miners have any
+       -- emission at all" checks (the Burn column), never displayed as pay
+       COALESCE(s.miner_alpha_per_day, 0) * s.price     AS miner_pool_tao_per_day,
        COALESCE(s.validator_alpha_per_day, 0) * s.price AS validator_tao_per_day,
        GREATEST(COALESCE(s.emitted_alpha_per_day,0)
                 - COALESCE(s.participant_alpha_per_day,0), 0) * s.price AS owner_tao_per_day,
        s.num_uids, s.max_uids, s.active_uids, s.validator_count,
        GREATEST(s.max_uids - s.num_uids, 0)    AS uids_free,
-       s.unique_coldkeys, s.top_coldkey, s.top_coldkey_pct, s.hhi,
+       COALESCE(rv.rivals, 0) AS unique_coldkeys, s.top_coldkey, s.top_coldkey_pct, s.hhi,
        s.burn_tao, s.registration_allowed, s.immunity_period, s.tempo,
        s.miner_burned, s.owner_incentive_share,
        s.network_registered_at, COALESCE(s.is_active, true) AS is_active, s.started_at,
@@ -79,8 +114,8 @@ SELECT s.netuid, s.name, s.symbol, s.price, s.market_cap_tao, s.emission_share,
        a.median_earner_tao_per_day,
        t.best_miner_tao_per_day, t.top_miner_uid, t.top_miner_hotkey,
        ro.validator_uids, ro.miner_uids,
-       CASE WHEN s.unique_coldkeys > 0
-            THEN (COALESCE(s.miner_alpha_per_day,0) * s.price) / s.unique_coldkeys
+       CASE WHEN rv.rivals > 0
+            THEN COALESCE(a.miners_paid_tao_per_day, 0) / rv.rivals
             END AS reward_per_operator,
        -- how long registration takes to repay IF you reach the earning cohort
        CASE WHEN COALESCE(a.median_earner_tao_per_day,0) > 0
@@ -96,6 +131,7 @@ FROM subnet_live s
 LEFT JOIN agg a USING (netuid)
 LEFT JOIN top t USING (netuid)
 LEFT JOIN roles ro USING (netuid)
+LEFT JOIN rivals rv USING (netuid)
 LEFT JOIN subnet_meta m USING (netuid)
 WHERE s.netuid <> 0
 ORDER BY s.emission_share DESC NULLS LAST

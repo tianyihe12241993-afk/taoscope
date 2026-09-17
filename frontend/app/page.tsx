@@ -278,25 +278,27 @@ export default function Overview() {
         </span>
       ) },
     { key: "miner_tao_per_day", label: "Miners / day", align: "right", width: 108,
-      title: "The miner pot: TAO paid to miners per day. Every subnet emits the same alpha — ~18% owner cut, then the rest splits 50/50 between miners and validators. What varies hugely is how many UIDs share the miner half: sometimes hundreds, sometimes one.",
+      title: "TAO actually paid to miners per day, at today's price. The subnet owner's own keys are excluded: whatever the owner routes to them is burned or recycled and reaches no miner, so a subnet that sends everything to its owner shows 0 here. What varies hugely is how many UIDs share this: sometimes hundreds, sometimes one.",
       value: (r) => r.miner_tao_per_day ?? 0,
       render: (r) => {
         const v = r.miner_tao_per_day ?? 0;
         return (
           <span className="tnum font-medium"
-                title={`shared by ${r.earning_miners ?? 0} earning UID(s) · validators ${moneyCompact(r.validator_tao_per_day, 1)}/day · owner ${moneyCompact(r.owner_tao_per_day, 1)}/day`}>
+                title={`shared by ${r.earning_miners ?? 0} earning miner UID(s) · the owner's keys are excluded`}>
             {moneyCompact(v, 1)}
           </span>
         );
       } },
     { key: "burn", label: "Burn", align: "right", width: 104,
-      title: "Share of miner emission the chain withheld from miners last tempo (SubtensorModule::MinerBurned). Incentive routed to the subnet owner's own hotkeys is burned or recycled, never paid — at 100% the 'Miners / day' pot reaches no miner at all. '—' means the subnet paid miners nothing last tempo, so there was nothing to burn.",
+      title: "Share of miner emission the chain withheld from miners last tempo (SubtensorModule::MinerBurned). Incentive routed to the subnet owner's own hotkeys is burned or recycled, never paid; 'Miners / day' already has this share taken out. '—' means the subnet paid miners nothing last tempo, so there was nothing to burn.",
       // null, not -1: Table sinks missing values in BOTH sort directions, so a
       // subnet with no miner emission never tops an ascending "burns least" sort.
-      value: (r) => ((r.miner_tao_per_day ?? 0) > 0 && r.miner_burned != null) ? r.miner_burned * 100 : null,
+      value: (r) => ((r.miner_pool_tao_per_day ?? 0) > 0 && r.miner_burned != null) ? r.miner_burned * 100 : null,
       render: (r) => {
         const burned = r.miner_burned;
-        if (burned === null || burned === undefined || (r.miner_tao_per_day ?? 0) <= 0) {
+        // the GROSS pool: Miners / day is already net of the burn, so a 100%-burn
+        // subnet reads 0 there and would wrongly render as "nothing to burn"
+        if (burned === null || burned === undefined || (r.miner_pool_tao_per_day ?? 0) <= 0) {
           return (
             <span style={{ color: "var(--text-muted)" }}
                   title="No miner emission last tempo — nothing to burn.">—</span>
@@ -310,9 +312,9 @@ export default function Overview() {
         const disagree = share !== null && share !== undefined && Math.abs(share - burned) > 0.05;
         const tone = v >= 50 ? "var(--delta-down)" : v >= 10 ? "var(--serious)" : "var(--delta-up)";
         const tip = disagree
-          ? `Chain withheld ${v.toFixed(1)}% last tempo, but the owner's keys hold ${(share * 100).toFixed(1)}% of incentive in the latest sweep. They disagree here — read both.`
+          ? `Chain withheld ${v.toFixed(1)}% last tempo, but the owner's keys were assigned ${(share * 100).toFixed(1)}% of miner emission in the latest sweep. They disagree here — read both.`
           : `${v.toFixed(1)}% of last tempo's miner emission went to the owner's hotkeys and was burned or recycled` +
-            (share !== null && share !== undefined ? ` · owner keys hold ${(share * 100).toFixed(1)}% of incentive` : "");
+            (share !== null && share !== undefined ? ` · owner keys were assigned ${(share * 100).toFixed(1)}% of miner emission` : "");
         return (
           <span className="inline-flex items-center justify-end gap-2" title={tip}>
             <span className="h-[5px] w-[30px] rounded-full overflow-hidden" style={{ background: "var(--surface-2)" }}>
@@ -347,7 +349,7 @@ export default function Overview() {
         );
       } },
     { key: "best_miner_tao_per_day", label: "Top miner", align: "right", width: 100,
-      title: "The best-earning miner hotkey's own emission per day at today's price. Validator hotkeys (those receiving dividends) are left out entirely, so no validator emission is in this number.",
+      title: "The best-earning miner hotkey's own emission per day at today's price. The owner's keys and validator hotkeys (those receiving dividends) are left out entirely, so neither owner nor validator emission is in this number.",
       value: (r) => r.best_miner_tao_per_day ?? 0,
       render: (r) => (
         <span className="tnum" style={{ color: "var(--text-secondary)" }}
@@ -357,15 +359,15 @@ export default function Overview() {
         </span>
       ) },
     { key: "unique_coldkeys", label: "Rivals", align: "right", width: 74,
-      title: "Distinct coldkeys competing here",
+      title: "Distinct coldkeys competing here, the subnet owner not counted",
       value: (r) => r.unique_coldkeys ?? 0,
       render: (r) => <span className="tnum">{r.unique_coldkeys ?? "—"}</span> },
     { key: "reward_per_operator", label: "Per rival", align: "right", width: 88,
-      title: "MINER reward per day divided by the number of competing operators",
+      title: "What miners are paid per day (owner's keys excluded) divided by the number of competing operators",
       value: (r) => r.reward_per_operator ?? 0,
       render: (r) => <span className="tnum">{money(r.reward_per_operator, 3)}</span> },
     { key: "pct_miners_earning", label: "Miners earning", align: "right", width: 178,
-      title: "Share of miner UIDs with any incentive at all, then the count: earning miners / all miner UIDs. Validators (permit holders receiving dividends) are left out. On most subnets this is under 25% — a big prize means nothing if you land in the zero-earning majority.",
+      title: "Share of miner UIDs paid any emission last tempo, then the count: earning miners / all miner UIDs. Validators (permit holders receiving dividends) and the owner's keys are left out. On most subnets this is under 25% — a big prize means nothing if you land in the zero-earning majority.",
       value: (r) => r.pct_miners_earning ?? -1,
       render: (r) => {
         const v = r.pct_miners_earning;
@@ -385,7 +387,7 @@ export default function Overview() {
         );
       } },
     { key: "payback_days", label: "Payback", align: "right", width: 82,
-      title: "Days for a median earning miner to recover the registration cost",
+      title: "Days for a median earning miner (owner's keys excluded) to recover the registration cost",
       value: (r) => r.payback_days ?? null,
       render: (r) => {
         if (r.payback_days === null || r.payback_days === undefined)

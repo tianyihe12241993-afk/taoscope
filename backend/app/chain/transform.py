@@ -169,21 +169,30 @@ def neurons_from_metagraph(m) -> tuple[dict, list[dict]]:
             inc_by_ck[ck] += incentive[i]
     earning_ck = sum(1 for v in inc_by_ck.values() if v > 0)
 
-    # Incentive held by the owner's own keys: every UID whose coldkey is the
-    # owner coldkey, plus SubnetOwnerHotkey -- the set the chain's
-    # get_owner_hotkeys() builds, whose incentive is recycled or burned rather
-    # than paid. This is a reconstruction; the chain records its own number as
-    # MinerBurned, fetched separately. Kept side by side so a disagreement is
-    # visible instead of one of them being silently believed.
+    # Share of the miner pool that reached no miner: 1 - (emission paid to
+    # miner-role UIDs that are not the owner's keys) / (miner half of emission).
+    # The owner's keys are every UID whose coldkey is the owner coldkey, plus
+    # SubnetOwnerHotkey -- the set the chain's get_owner_hotkeys() builds, whose
+    # share is burned or recycled. A reconstruction of the chain's own
+    # MinerBurned (fetched separately), kept side by side so a disagreement shows.
+    #
+    # Measured from what miners were PAID, not from the owner's incentive (the
+    # column name predates this), for two reasons found on 2026-09-17:
+    #  - six subnets run two mechanisms and the metagraph incentive vector is
+    #    mechanism 0 only: SN44's owner held incentive 1.0 against a 5% burn;
+    #  - an owner key can be a validator, whose emission mixes dividends in, so
+    #    its miner share cannot be read off its own emission (SN4, SN67, SN113).
+    # This form matched MinerBurned within 1pt on 125/125 emitting subnets.
     owner_ck = getattr(m, "owner_coldkey", None)
     owner_hk = getattr(m, "owner_hotkey", None)
-    total_inc = sum(incentive)
-    owner_inc = sum(
-        incentive[i] for i in range(n)
-        if (owner_ck and i < len(coldkeys) and coldkeys[i] == owner_ck)
-        or (owner_hk and hotkeys[i] == owner_hk)
+    pool_em = 0.5 * sum(emission)  # the chain's 50/50 miner/validator split, as above
+    paid_em = sum(
+        emission[i] for i in range(n)
+        if not (permit[i] and dividends[i] > 0)
+        and not ((owner_ck and i < len(coldkeys) and coldkeys[i] == owner_ck)
+                 or (owner_hk and hotkeys[i] == owner_hk))
     )
-    owner_incentive_share = (owner_inc / total_inc) if total_inc > 0 else None
+    owner_incentive_share = min(1.0, max(0.0, 1.0 - paid_em / pool_em)) if pool_em > 0 else None
 
     top_ck, top_em = (max(by_ck.items(), key=lambda kv: kv[1]) if by_ck else (None, 0.0))
     hhi = sum((v / total_em) ** 2 for v in by_ck.values()) if by_ck else 0.0
