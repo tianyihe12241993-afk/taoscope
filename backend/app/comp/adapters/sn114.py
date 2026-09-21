@@ -286,6 +286,8 @@ def _usd(runs) -> str:
 class SN114(SubnetAdapter):
     # ---- identity -----------------------------------------------------------
     netuid = 114
+    # our own deregistration alert is richer than the generic one
+    covers = frozenset({"dereg"})
     slug = "soma"
     label = "SOMA"
 

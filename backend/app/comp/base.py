@@ -248,7 +248,62 @@ def chain_block(s: dict) -> str:
     tph = ch.get("realized_tao_per_hour")
     if tph is not None:
         rows.append(("τ/h", num(tph, 3)))
-    return "\n\n<b>⛓ CHAIN</b>\n" + two_col(rows, 20)
+    out = "\n\n<b>⛓ CHAIN</b>\n" + two_col(rows, 20)
+    line = ours_line(s)
+    if line:
+        out += f"\n<b>🔑 OURS</b> {line}"
+    return out
+
+
+def ours_line(s: dict) -> str:
+    """Our UIDs on this subnet in one phrase, from the poller's `_ours_chain`.
+
+    "" when the sweep was not read or we hold nothing -- a subnet we are not on
+    must not grow an "0 uids" line in every /state."""
+    o = s.get("_ours_chain") or {}
+    if not o.get("n"):
+        return ""
+    bits = [f"{o['n']} uid{'s' if o['n'] != 1 else ''}",
+            f"{o.get('earning', 0)} earning",
+            f"τ{num(o.get('tpd'), 2)}/day"]
+    ranks = [u["rank"] for u in o.get("uids") or [] if u.get("rank") and u.get("tpd")]
+    if ranks:
+        bits.append(f"best rank #{min(ranks)}")
+    return " · ".join(bits)
+
+
+def ours_chain_block(s: dict, limit: int = 40) -> str:
+    """Every UID we hold on this subnet -- the same table in every topic.
+
+    Earning rows carry the `+` diff marker, so they are green where the client
+    highlights and still marked where it does not."""
+    o = s.get("_ours_chain")
+    if o is None:
+        return "<b>🔑 OUR HOTKEYS</b>\n<i>chain sweep not read yet</i>"
+    if not o.get("n"):
+        return "<b>🔑 OUR HOTKEYS</b>\n<i>none of our coldkeys holds a UID here</i>"
+    uids = sorted(o.get("uids") or [], key=lambda u: (-(u.get("tpd") or 0), u["uid"]))
+    L = [f"{'':2}{'uid':>4} {'hotkey':<13} {'rank':>4} {'τ/day':>7}"]
+    for u in uids[:limit]:
+        flag = ("🛡" if u.get("immune") else "") + ("V" if u.get("vp") else "")
+        L.append(f"{'+ ' if u.get('tpd') else '  '}{u['uid']:>4} "
+                 f"{esc(short(u.get('hk'), 6, 4)):<13} "
+                 f"{str(u.get('rank') or '—'):>4} {num(u.get('tpd'), 2):>7} {flag}")
+    more = len(uids) - limit
+    return (f"<b>🔑 OUR HOTKEYS</b> · {ours_line(s)}\n" + diff_block(L)
+            + (f"\n<i>+{more} more</i>" if more > 0 else "")
+            + "\n<i>+ earning · 🛡 immune · V validator permit</i>")
+
+
+# Alerts every subnet topic gets from the framework, whatever its adapter.
+GENERIC_ALERTS = {
+    "registration": "registration opened or closed on chain",
+    "operators": "someone burn-registered — new operators precede new submissions",
+    "our_earning": "all of our UIDs here stopped earning, or started again",
+    "my_miners": "one of our UIDs was deregistered (taken by another hotkey)",
+    "king_change": "a different coldkey became this subnet's top earner",
+    "repo": "a watched repo moved — often the earliest sign the rules changed",
+}
 
 
 class SubnetAdapter:
@@ -262,6 +317,10 @@ class SubnetAdapter:
     repos: list[str] = []
     # extra dashboard links surfaced by /info
     links: dict[str, str] = {}
+    # Generic alerts this adapter already reports in its own words. The
+    # framework then leaves them out of this subnet's topic instead of saying
+    # the same thing twice. Values: "dereg" (one of our UIDs was taken over).
+    covers: frozenset[str] = frozenset()
 
     # ---- required ----
     async def snapshot(self) -> dict:
@@ -319,11 +378,12 @@ class SubnetAdapter:
               "<code>/info</code> the rules · <code>/poll</code> force a refresh",
               "<code>/mute &lt;kind&gt;</code> silence one alert kind"]
         cat = dict(self.alerts)
-        cat.setdefault("registration", "registration opened or closed on chain")
-        cat.setdefault("operators", "someone burn-registered — new operators "
-                                    "precede new submissions")
-        cat.setdefault("repo", "a watched repo moved — often the earliest sign "
-                               "the rules changed")
+        for k, v in GENERIC_ALERTS.items():
+            if k == "my_miners" and "dereg" in self.covers:
+                continue
+            if k == "repo" and not self.repos:
+                continue
+            cat.setdefault(k, v)
         L += ["", "<b>Alerts you will get here</b>"]
         L += [f"• <code>{esc(k)}</code> — {esc(v)}" for k, v in cat.items()]
         if self.repos:

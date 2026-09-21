@@ -17,6 +17,7 @@ export type ReorderPlace = "before" | "after";
 
 export function DataTable<T>({
   rows, cols, initialSort, initialDesc = true, rowKey, onRowClick, maxHeight, tieBreak, onReorder, rowClass,
+  rowNumbers = false,
 }: {
   rows: T[];
   cols: Col<T>[];
@@ -31,6 +32,10 @@ export function DataTable<T>({
   onReorder?: (key: string, targetKey: string, place: ReorderPlace) => void;
   /** Extra class for a row (role / ownership tints live in globals.css). */
   rowClass?: (row: T) => string | undefined;
+  /** Count the rows as displayed: 1, 2, 3… down the current sort and filter.
+   *  Deliberately outside `cols` — it is the reading order, not a field, so it
+   *  cannot be sorted, hidden or dragged away from the left edge. */
+  rowNumbers?: boolean;
 }) {
   const [sort, setSort] = useState(initialSort ?? cols[0].key);
   const [desc, setDesc] = useState(initialDesc);
@@ -96,6 +101,10 @@ export function DataTable<T>({
       <table className="dense w-full text-[12.5px]">
         <thead>
           <tr>
+            {rowNumbers && (
+              <th className="px-3.5" style={{ textAlign: "right", width: 46 }}
+                  title="Position in the list as it is currently sorted and filtered">#</th>
+            )}
             {cols.map((c) => {
               const active = effectiveSort === c.key;
               return (
@@ -155,9 +164,14 @@ export function DataTable<T>({
           </tr>
         </thead>
         <tbody>
-          {sorted.map((r) => (
+          {sorted.map((r, i) => (
             <tr key={rowKey(r)} onClick={() => onRowClick?.(r)}
                 className={[onRowClick ? "cursor-pointer" : "", rowClass?.(r) ?? ""].join(" ").trim()}>
+              {rowNumbers && (
+                <td className="px-3.5 py-[9px]" style={{ textAlign: "right" }}>
+                  <span className="tnum" style={{ color: "var(--text-muted)" }}>{i + 1}</span>
+                </td>
+              )}
               {cols.map((c) => (
                 <td key={c.key} className="px-3.5 py-[9px]"
                     style={{ textAlign: c.align ?? "left" }}>
@@ -168,7 +182,7 @@ export function DataTable<T>({
           ))}
           {sorted.length === 0 && (
             <tr>
-              <td colSpan={cols.length} className="px-3.5 py-10 text-center"
+              <td colSpan={cols.length + (rowNumbers ? 1 : 0)} className="px-3.5 py-10 text-center"
                   style={{ color: "var(--text-muted)" }}>
                 nothing matches those filters
               </td>

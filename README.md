@@ -421,27 +421,66 @@ The bot must be an **administrator with Manage Topics**. Then, in the group:
                 topic you ran it in the cross-subnet digest
 ```
 
+After that, **topics look after themselves**. Every 5 minutes the competition
+supervisor checks which subnets our coldkeys (`my_coldkey`) hold a UID on and
+creates any missing topic (`TAOSCOPE_TELEGRAM_AUTO_TOPICS`, default on). It only
+ever adds: a subnet we get deregistered from keeps its topic, and a topic you
+delete or `/unbind` is remembered in `comp_topic_skip` and not recreated until
+you run `/setup` or `/bind <netuid>`. A deleted topic is noticed on the first
+send that fails with `message thread not found`: its binding is removed once,
+General is told, and that alert is delivered to General instead.
+
 Or bind topics you already have, one command inside each:
 
 ```
-/bind 100       this topic is SN100
+/bind 100       this topic is SN100 (any netuid on chain, adapter or not)
 /bind digest    this topic is the cross-subnet summary
-/topics         show every binding
-/unbind
+/topics         every binding, plus held subnets that have no topic
+/unbind         stop routing here, and stop auto-creating this subnet's topic
 ```
+
+### The standard topic
+
+Every subnet topic is the same shape, whether the subnet has a hand-written
+adapter or only the chain view (`app/comp/chain_adapter.py`, used for any
+subnet we hold a UID on with no adapter):
+
+| | every topic |
+|---|---|
+| name | `SN<netuid> · <label>` |
+| first message | the subnet's `/guide`, pinned |
+| `/state` | the adapter's view, then the shared `⛓ CHAIN` block and one `🔑 OURS` line (uids · earning · τ/day · best rank) |
+| `/mine` | the adapter's view, then the same `🔑 OUR HOTKEYS` table (uid, hotkey, rank, τ/day, immune, validator permit) |
+| `/board` | the adapter's leaderboard, or the top earners by emission on chain |
+| `/mute` with no kind | the kinds this topic can actually receive |
+| alerts | the adapter's own, plus `registration`, `operators`, `our_earning` from the poller and `my_miners` (deregistration) and `king_change` from the chain sweep |
+
+Chain events are routed like competition events: an event about a subnet goes to
+that subnet's topic when one exists, otherwise to General. An adapter that reports
+deregistration itself declares `covers = frozenset({"dereg"})` (SN62, SN67, SN114)
+so the generic alert does not arrive twice. Severity decides whether the phone
+buzzes for chain events too.
+
+Messages longer than Telegram's 4096 visible characters are split at paragraph or
+line boundaries, with any open `<pre>` closed and reopened across the cut; before
+this, SN62's `/mine` (≈6,700 characters) was rejected and lost.
+
+The `/` menu is registered at startup (`setMyCommands`) with one list for groups
+and one for private chats.
 
 ### Commands — no arguments needed inside a bound topic
 
 ```
-/state     crown, emission split, field size, queue, our runs
+/state     crown, emission split, field size, queue, our runs, our UIDs
 /info      rules, caps, registration cost, operators, watched repos
 /board     leaderboard
-/mine      our submissions in detail, with per-group scores
+/mine      our submissions in detail, then every hotkey we hold here
 /events    what changed here recently
+/guide     post and pin this subnet's primer
 /watch <submission_id> [label]   ·  /unwatch <id>
 /poll      force a refresh now
 /mute <kind> · /unmute <kind>
-/comphelp
+/help      in a subnet topic: these commands; in General: everything
 ```
 
 Every one also takes an explicit netuid (`/state 100`), so they work in a DM or

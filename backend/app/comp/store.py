@@ -177,6 +177,121 @@ async def all_topics() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+async def topic_for(chat_id: int, netuid: int) -> tuple[int, dict] | None:
+    """(thread_id, prefs) of this chat's topic for a subnet, or None."""
+    row = await pool().fetchrow(
+        "SELECT thread_id, prefs FROM comp_topic WHERE chat_id=$1 AND netuid=$2"
+        " ORDER BY bound_at DESC LIMIT 1", chat_id, netuid)
+    return (row["thread_id"], dict(row["prefs"] or {})) if row else None
+
+
+async def topic_gone(chat_id: int, thread_id: int) -> int | None:
+    """Telegram says this thread no longer exists: drop the binding.
+
+    Returns the netuid it was bound to (None for a digest). A subnet topic that
+    was deleted is also recorded as skipped, so the automatic sync does not
+    recreate a topic the operator removed on purpose."""
+    row = await pool().fetchrow(
+        "DELETE FROM comp_topic WHERE chat_id=$1 AND thread_id=$2 RETURNING netuid",
+        chat_id, thread_id)
+    netuid = row["netuid"] if row else None
+    if netuid is not None:
+        await skip_topic(chat_id, netuid, "deleted")
+    return netuid
+
+
+# ---------------- per-chat topic opt-out ----------------
+async def skip_topic(chat_id: int, netuid: int, reason: str) -> None:
+    await pool().execute(
+        "INSERT INTO comp_topic_skip (chat_id, netuid, reason) VALUES ($1,$2,$3)"
+        " ON CONFLICT (chat_id, netuid) DO UPDATE SET reason=EXCLUDED.reason, at=now()",
+        chat_id, netuid, reason)
+
+
+async def unskip_topic(chat_id: int, netuid: int | None = None) -> None:
+    """Clear one opt-out, or every opt-out for the chat when netuid is None."""
+    if netuid is None:
+        await pool().execute("DELETE FROM comp_topic_skip WHERE chat_id=$1", chat_id)
+    else:
+        await pool().execute(
+            "DELETE FROM comp_topic_skip WHERE chat_id=$1 AND netuid=$2", chat_id, netuid)
+
+
+async def skipped_topics(chat_id: int) -> set[int]:
+    rows = await pool().fetch(
+        "SELECT netuid FROM comp_topic_skip WHERE chat_id=$1", chat_id)
+    return {r["netuid"] for r in rows}
+
+
+async def forum_chats() -> list[int]:
+    """Chats that were set up as a subnet forum and belong to a linked account.
+
+    A digest binding is what /setup leaves behind, so it marks a forum. Requiring
+    the account link as well keeps test fixtures (fake chat ids written by the
+    devtools checks) out of the automatic topic sync."""
+    rows = await pool().fetch(
+        "SELECT DISTINCT t.chat_id FROM comp_topic t"
+        " JOIN telegram_link l ON l.chat_id = t.chat_id AND l.linked_at IS NOT NULL"
+        " WHERE t.netuid IS NULL")
+    return [r["chat_id"] for r in rows]
+
+
+# ---------------- our UIDs on chain ----------------
+async def held_subnets() -> dict[int, str]:
+    """netuid -> chain name for every subnet a registered coldkey holds a UID on."""
+    rows = await pool().fetch(
+        "SELECT n.netuid, max(s.name) AS name FROM neuron_live n"
+        " JOIN my_coldkey m ON m.coldkey = n.coldkey"
+        " LEFT JOIN subnet_live s ON s.netuid = n.netuid"
+        " GROUP BY n.netuid")
+    return {r["netuid"]: (r["name"] or f"subnet-{r['netuid']}") for r in rows}
+
+
+async def bound_netuids() -> set[int]:
+    rows = await pool().fetch(
+        "SELECT DISTINCT netuid FROM comp_topic WHERE netuid IS NOT NULL")
+    return {r["netuid"] for r in rows}
+
+
+async def subnet_name(netuid: int) -> str | None:
+    return await pool().fetchval("SELECT name FROM subnet_live WHERE netuid=$1", netuid)
+
+
+async def ours_on_chain(netuid: int) -> dict:
+    """Every UID a registered coldkey holds on this subnet, from the last sweep.
+
+    `tpd` uses the same formula as /me, so the topic and the DM agree."""
+    rows = await pool().fetch(
+        "SELECT n.uid, n.hotkey, n.incentive, n.rank_in_subnet, n.validator_permit,"
+        "       n.block_at_registration, s.block, s.immunity_period,"
+        "       n.emission * (7200.0 / NULLIF(s.tempo, 0)) * s.price AS tpd"
+        " FROM neuron_live n"
+        " JOIN my_coldkey m ON m.coldkey = n.coldkey"
+        " JOIN subnet_live s ON s.netuid = n.netuid"
+        " WHERE n.netuid = $1 ORDER BY n.uid", netuid)
+    uids = []
+    for r in rows:
+        immune = None
+        if r["block"] and r["block_at_registration"] is not None and r["immunity_period"]:
+            immune = (r["block"] - r["block_at_registration"]) < r["immunity_period"]
+        uids.append({"uid": r["uid"], "hk": r["hotkey"] or "",
+                     "inc": float(r["incentive"] or 0),
+                     "tpd": float(r["tpd"] or 0),
+                     "rank": r["rank_in_subnet"],
+                     "vp": bool(r["validator_permit"]),
+                     "immune": immune})
+    return {"n": len(uids),
+            "earning": sum(1 for u in uids if u["tpd"] > 0),
+            "tpd": sum(u["tpd"] for u in uids),
+            "uids": uids}
+
+
+async def seen_kinds(netuid: int) -> list[str]:
+    rows = await pool().fetch(
+        "SELECT DISTINCT kind FROM comp_event WHERE netuid=$1", netuid)
+    return [r["kind"] for r in rows]
+
+
 async def set_pref(chat_id: int, thread_id: int, kind: str, on: bool) -> None:
     await pool().execute(
         "UPDATE comp_topic SET prefs = prefs || jsonb_build_object($3::text, $4::bool)"

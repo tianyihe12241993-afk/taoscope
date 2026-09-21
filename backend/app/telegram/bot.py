@@ -15,6 +15,10 @@ import httpx
 from .. import events as events_mod
 from ..ai import agent as ai
 from ..comp import commands as comp_commands
+from ..comp import router as comp_router
+from ..comp import store as comp_store
+from ..comp.adapters import get as get_adapter
+from ..comp.base import SEVERITY
 from ..config import settings
 from ..db import pool
 from ..hub import hub
@@ -34,27 +38,81 @@ ICON = {
 
 HELP = (
     "<b>TaoScope</b>\n\n"
-    "/link <code>CODE</code> — connect this chat to your account\n"
-    "/ask <code>question</code> — ask anything about the network\n"
-    "/events — the latest network events\n"
+    "<b>In a subnet topic</b> — no arguments needed\n"
+    "/state — standings, chain facts, our UIDs in one line\n"
+    "/mine — our entries and every hotkey we hold there\n"
+    "/board · /info · /events · /guide · /mute\n\n"
+    "<b>Anywhere</b>\n"
     "/me — your coldkeys, hotkeys and daily earnings\n"
     "/sn <code>64</code> — subnet snapshot\n"
     "/ck <code>5Abc…</code> — any coldkey's footprint\n"
     "/top — biggest earners on the network\n"
+    "/events — the latest network events\n"
     "/alerts — your active price alerts\n"
     "/keys — API credit left across providers, checked live\n"
-    "/pods — Lium pods: status, GPU, \$/h, uptime, spend\n"
-    "/comphelp — per-subnet competition tracking\n"
-    "/help — this message"
+    "/pods — Lium pods: status, GPU, $/h, uptime, spend\n"
+    "/ask <code>question</code> — ask anything about the network\n"
+    "/topics — which topic is which subnet\n"
+    "/link <code>CODE</code> — connect this chat to your account\n"
+    "/comphelp — every topic command"
 )
 
+# The "/" menu Telegram shows. Registered at startup so every chat sees the
+# same standard set; a command missing here still works when typed.
+MENU_GROUP = [
+    ("state", "this subnet now: standings, chain, our UIDs"),
+    ("mine", "our entries and hotkeys on this subnet"),
+    ("board", "this subnet's leaderboard"),
+    ("info", "rules, registration cost, links"),
+    ("events", "what changed here recently"),
+    ("guide", "pin this subnet's primer"),
+    ("mute", "silence one alert kind in this topic"),
+    ("topics", "which topic is which subnet"),
+    ("sn", "chain snapshot of any subnet: /sn 64"),
+    ("top", "biggest earners on the network"),
+    ("keys", "API credit left, checked live"),
+    ("pods", "Lium pods and what they cost"),
+    ("ask", "ask a question in plain English"),
+    ("help", "all commands"),
+]
+MENU_PRIVATE = [
+    ("me", "your hotkeys and daily earnings"),
+    ("sn", "chain snapshot of any subnet: /sn 64"),
+    ("ck", "any coldkey's footprint"),
+    ("top", "biggest earners on the network"),
+    ("events", "the latest network events"),
+    ("alerts", "your price alerts"),
+    ("keys", "API credit left, checked live"),
+    ("pods", "Lium pods and what they cost"),
+    ("state", "a subnet's competition: /state 100"),
+    ("link", "connect this chat to your account"),
+    ("help", "all commands"),
+]
 
-async def call(method: str, **params):
+
+async def call_ex(method: str, **params) -> tuple[object, str]:
+    """(result, error description). result is None on any failure.
+
+    The description is returned because some failures call for an action, not
+    just a log line: "message thread not found" means a topic was deleted, and
+    the binding pointing at it has to go."""
     if not settings.telegram_bot_token:
-        return None
+        return None, "no bot token"
     url = API.format(token=settings.telegram_bot_token, method=method)
     async with httpx.AsyncClient(timeout=70) as cx:
-        r = await cx.post(url, json=params)
+        for attempt in (1, 2):
+            r = await cx.post(url, json=params)
+            if r.status_code == 429 and attempt == 1:
+                # Flood control. Creating a dozen topics at once trips it, and
+                # the limit says exactly how long to wait -- so wait, once.
+                try:
+                    wait = int(r.json().get("parameters", {}).get("retry_after", 5))
+                except Exception:  # noqa: BLE001
+                    wait = 5
+                log.info("telegram %s rate-limited; retrying in %ss", method, wait)
+                await asyncio.sleep(min(wait, 60) + 1)
+                continue
+            break
         if r.status_code != 200:
             # Name the TARGET, not just the error. "message thread not found"
             # with no chat/thread in the line is undiagnosable -- a deleted
@@ -62,12 +120,21 @@ async def call(method: str, **params):
             # was dropped is invisible. A monitor that fails silently is worth
             # nothing; one that fails loudly but anonymously is barely better.
             target = ""
-            if method in ("sendMessage", "editMessageText", "sendPhoto"):
+            if method in ("sendMessage", "editMessageText", "sendPhoto",
+                          "createForumTopic", "pinChatMessage"):
                 target = (f" [chat={params.get('chat_id')} "
                           f"thread={params.get('message_thread_id', 'General')}]")
             log.warning("telegram %s failed%s: %s", method, target, r.text[:200])
-            return None
-        return r.json().get("result")
+            try:
+                desc = str(r.json().get("description") or r.status_code)
+            except Exception:  # noqa: BLE001
+                desc = f"HTTP {r.status_code}"
+            return None, desc
+        return r.json().get("result"), ""
+
+
+async def call(method: str, **params):
+    return (await call_ex(method, **params))[0]
 
 
 # The forum topic the message being handled arrived in. A reply must land back
@@ -534,7 +601,8 @@ async def handle(update: dict):
         return
 
     if cmd in ("/start", "/help"):
-        await send(chat_id, HELP)
+        netuid, _bound = await comp_store.netuid_for_topic(chat_id, thread_id)
+        await send(chat_id, comp_commands.HELP if netuid is not None else HELP)
     elif cmd == "/link":
         await cmd_link(chat_id, arg, username)
     elif cmd == "/me":
@@ -583,22 +651,47 @@ async def cmd_events(chat_id: int):
     await send(chat_id, "\n".join(lines))
 
 
+# Chain events the competition poller ALSO emits for every tracked subnet. In a
+# chat with a topic for that subnet the topic already gets its own copy.
+COMP_DUPLICATES = {"registration"}
+# chain kind -> the `covers` flag of an adapter that reports it itself
+COVERED_AS = {"my_miners": "dereg"}
+
+
 async def notify_event(ev: dict) -> None:
-    """Push one detected event to every chat subscribed to its kind."""
+    """Push one detected chain event to every chat subscribed to its kind.
+
+    Routed like a competition event: an event about a subnet goes to that
+    subnet's topic when the chat has one, and to General otherwise. Severity
+    decides whether it buzzes, the same as everywhere else."""
     if not settings.telegram_bot_token:
         return
     kind = ev["kind"]
-    text = f"{ICON.get(kind, '•')} <b>{ev['title']}</b>"
-    if ev.get("body"):
-        text += f"\n{ev['body']}"
-    if ev.get("netuid") is not None:
-        text += f"\n\n<i>/sn {ev['netuid']} for detail</i>"
+    netuid = ev.get("netuid")
+    ad = get_adapter(netuid) if netuid is not None else None
+    base = dict(ev, icon=ICON.get(kind, ""),
+                title=_html.escape(str(ev["title"]), quote=False),
+                body=_html.escape(str(ev.get("body") or ""), quote=False))
+    _, loud = SEVERITY.get(ev.get("severity") or "info", ("•", False))
     try:
         for chat_id, user_id in await events_mod.subscribers(kind):
             # personal events (deregistrations) go only to their owner
             if ev.get("user_id") is not None and ev["user_id"] != user_id:
                 continue
-            await send(chat_id, text)
+            dest = await comp_store.topic_for(chat_id, netuid) if netuid is not None else None
+            if dest:
+                thread_id, prefs = dest
+                if kind in COMP_DUPLICATES or prefs.get(kind) is False:
+                    continue
+                if ad is not None and COVERED_AS.get(kind) in ad.covers:
+                    continue
+                text = comp_router.format_event(base)
+            else:
+                thread_id = 0
+                text = comp_router.format_event(base)
+                if netuid is not None:
+                    text += f"\n\n<i>/sn {netuid} for detail</i>"
+            await comp_router.send_to(chat_id, thread_id, text, silent=not loud)
     except Exception:  # noqa: BLE001
         log.exception("notify_event failed")
 
@@ -628,6 +721,14 @@ async def check_alerts():
 
 
 # ---------------- loops ----------------
+async def set_menu() -> None:
+    """Register the standard "/" menu. Best effort: a refusal costs only the menu."""
+    for scope, menu in (({"type": "all_group_chats"}, MENU_GROUP),
+                        ({"type": "all_private_chats"}, MENU_PRIVATE)):
+        await call("setMyCommands", scope=scope,
+                   commands=[{"command": c, "description": d} for c, d in menu])
+
+
 async def poll_loop():
     if not settings.telegram_bot_token:
         hub.status["telegram"] = "disabled (no bot token)"
@@ -642,6 +743,7 @@ async def poll_loop():
     BOT_USERNAME = me.get("username")
     hub.status["telegram"] = f"online @{BOT_USERNAME}"
     log.info("telegram bot online: @%s", BOT_USERNAME)
+    await set_menu()
 
     offset = None
     while True:

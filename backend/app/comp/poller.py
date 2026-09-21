@@ -19,16 +19,21 @@ import asyncio
 import logging
 import time
 
+from ..config import settings
 from ..db import pool
 from ..hub import hub
-from . import github, router, store
+from . import adapters as registry
+from . import github, router, store, topics
 from .adapters import all_adapters
-from .base import CompEvent, SubnetAdapter
+from .base import CompEvent, SubnetAdapter, num
 
 log = logging.getLogger("taoscope.comp.poller")
 
 REPO_POLL_S = 600
 BACKOFF_MAX_S = 900
+# How often the supervisor looks for subnets we newly hold a UID on. The neuron
+# sweep that would reveal one runs every 15 minutes.
+SUPERVISE_S = 300
 
 
 async def _chain_facts(netuid: int) -> dict:
@@ -82,6 +87,34 @@ def _diff_chain(old: dict, new: dict) -> list[CompEvent]:
     return out
 
 
+def _diff_ours_chain(old: dict, new: dict) -> list[CompEvent]:
+    """Our UIDs on this subnet stopped earning altogether, or started.
+
+    Subnet-level on purpose: per-UID flips on a 27-UID subnet would be a wall of
+    messages that each say nothing. "Everything we hold here earns zero" is the
+    line that calls for a look. Deregistration is not reported here -- the chain
+    sweep already emits it, and it is routed to this topic."""
+    o, n = old.get("_ours_chain"), new.get("_ours_chain")
+    if o is None or n is None or not n.get("n"):
+        return []
+    was, now = int(o.get("earning") or 0), int(n.get("earning") or 0)
+    if was > 0 and now == 0:
+        return [CompEvent(
+            kind="our_earning", severity="warn", icon="📉",
+            title="Our UIDs here stopped earning",
+            body=(f"{was} → <b>0</b> earning of {n['n']} uids · "
+                  f"was τ{num(o.get('tpd'), 2)}/day\n"
+                  f"<i>/mine for every hotkey</i>"),
+            dedup_key="stopped", cooldown_h=6.0)]
+    if was == 0 and now > 0:
+        return [CompEvent(
+            kind="our_earning", severity="good", icon="💰",
+            title=f"Earning here — {now} of {n['n']} uids",
+            body=f"τ{num(n.get('tpd'), 2)}/day\n<i>/mine for every hotkey</i>",
+            dedup_key="started", cooldown_h=6.0)]
+    return []
+
+
 async def _sync_watchlist(ad: SubnetAdapter) -> None:
     """Refresh the watchlist from whatever the miner tooling wrote.
 
@@ -131,6 +164,14 @@ async def tick(ad: SubnetAdapter, *, check_repos: bool) -> int:
             return int(f) if f.is_integer() and abs(f) < 1e15 else f
         new["_chain"] = {k: _plain(v) for k, v in chain.items()}
 
+    # Our UIDs, merged into EVERY subnet's snapshot the same way, so /state,
+    # /mine and the digest read them identically whatever the adapter. A failed
+    # read omits the key: absence is not a change.
+    try:
+        new["_ours_chain"] = await store.ours_on_chain(ad.netuid)
+    except Exception:  # noqa: BLE001
+        log.exception("SN%s: reading our UIDs failed", ad.netuid)
+
     old = await store.last_state(ad.netuid)
 
     events: list[CompEvent] = []
@@ -139,6 +180,7 @@ async def tick(ad: SubnetAdapter, *, check_repos: bool) -> int:
     except Exception:  # noqa: BLE001
         log.exception("SN%s diff failed", ad.netuid)
     events += _diff_chain(old, new)
+    events += _diff_ours_chain(old, new)
     if check_repos and ad.repos:
         events += await github.check_all(ad.netuid, ad.repos)
 
@@ -200,7 +242,38 @@ async def loop_for(ad: SubnetAdapter) -> None:
         await asyncio.sleep(delay)
 
 
+async def supervise(running: dict[int, asyncio.Task]) -> None:
+    """Keep one poll loop per tracked subnet, and one topic per held subnet.
+
+    Tracked grows at runtime: registering a hotkey on a new subnet adds a chain
+    adapter on the next cycle, a loop for it, and (if enabled) its topic."""
+    await asyncio.sleep(20)
+    try:
+        while True:
+            try:
+                new = await registry.refresh()
+                if new:
+                    log.info("now tracking on chain: %s",
+                             ", ".join(f"SN{a.netuid}" for a in new))
+                for ad in all_adapters():
+                    if ad.netuid not in running or running[ad.netuid].done():
+                        running[ad.netuid] = asyncio.create_task(loop_for(ad))
+                if settings.telegram_bot_token and settings.telegram_auto_topics:
+                    await topics.sync_all()
+                hub.status["comp_supervisor"] = f"ok ({len(running)} subnets)"
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                log.exception("competition supervisor failed")
+                hub.status["comp_supervisor"] = f"failing: {exc}"
+            await asyncio.sleep(SUPERVISE_S)
+    finally:
+        for task in running.values():
+            task.cancel()
+
+
 def start() -> list[asyncio.Task]:
     ads = all_adapters()
     log.info("competition tracking: %s", ", ".join(f"SN{a.netuid}" for a in ads) or "none")
-    return [asyncio.create_task(loop_for(a)) for a in ads]
+    running = {a.netuid: asyncio.create_task(loop_for(a)) for a in ads}
+    return [*running.values(), asyncio.create_task(supervise(running))]

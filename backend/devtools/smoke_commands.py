@@ -31,6 +31,20 @@ async def run(cmd, arg="", thread=SN100_THREAD):
 
 async def main():
     await db.connect()
+    try:
+        await checks()
+    finally:
+        # Leave no test rows behind, pass or fail. A crash before cleanup once
+        # left this fake chat bound to SN100 in the live database, so every
+        # SN100 alert was also sent to a chat that does not exist.
+        await store.unbind_topic(CHAT, SN100_THREAD)
+        await store.unbind_topic(CHAT, DIGEST_THREAD)
+        await db.pool().execute("DELETE FROM comp_watch WHERE ref='deadbeefcafe0000'")
+        await db.close()
+    print("\nALL COMMAND CHECKS PASSED")
+
+
+async def checks():
     print("== unbound topic: answers, but says it is unbound ==")
     b = await run("state", thread=UNBOUND)
     assert "isn't bound" in b and "SN100" in b, b
@@ -46,7 +60,9 @@ async def main():
             continue
         b = await run(c)
         assert len(b) > 60, f"/{c} rendered almost nothing"
-        assert "SN100" in b or "leaderboard" in b or "Our SN100" in b
+        # /mine may legitimately say "Nothing tracked yet." -- what every
+        # topic's /mine must carry is the table of our hotkeys on chain.
+        assert ("SN100" in b or "leaderboard" in b or "OUR HOTKEYS" in b), b
 
     print("\n== explicit netuid overrides the binding (works in a DM) ==")
     b = await run("state", "100", thread=UNBOUND)
@@ -76,12 +92,6 @@ async def main():
     print("\n== topics list ==")
     await run("topics")
 
-    # leave no test rows behind
-    await store.unbind_topic(CHAT, SN100_THREAD)
-    await store.unbind_topic(CHAT, DIGEST_THREAD)
-    await db.pool().execute("DELETE FROM comp_watch WHERE ref='deadbeefcafe0000'")
-    await db.close()
-    print("\nALL COMMAND CHECKS PASSED")
 
 
 asyncio.run(main())

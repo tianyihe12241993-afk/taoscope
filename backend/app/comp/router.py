@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 from . import store
 from .base import SEVERITY
@@ -24,31 +25,121 @@ log = logging.getLogger("taoscope.comp.router")
 SEND_GAP_S = 1.2
 
 
-async def send_to(chat_id: int, thread_id: int, text: str,
-                  *, silent: bool = False) -> dict | None:
-    from ..telegram.bot import call     # late: bot imports comp.commands
+def thread_gone(error: str) -> bool:
+    """Telegram's answer when the topic a message targets has been deleted."""
+    return "message thread not found" in (error or "").lower()
+
+
+# Telegram rejects a message whose text -- measured after the HTML is parsed, in
+# UTF-16 units -- exceeds 4096. The plain-text retry is just as long, so an
+# over-long message was lost outright: SN62's /mine renders ~6,700 characters.
+MAX_TEXT = 4000
+
+
+def visible_len(text: str) -> int:
+    import html
+    plain = html.unescape(_strip(text))
+    return len(plain.encode("utf-16-le")) // 2
+
+
+_TAG = re.compile(r"<(/?)([a-zA-Z-]+)[^>]*>")
+
+
+def _open_tags(text: str) -> list[str]:
+    """The opening tags `text` leaves unclosed, outermost first."""
+    stack: list[str] = []
+    for m in _TAG.finditer(text):
+        if m.group(1):
+            for i in range(len(stack) - 1, -1, -1):
+                if _TAG.match(stack[i]).group(2) == m.group(2):
+                    del stack[i]
+                    break
+        else:
+            stack.append(m.group(0))
+    return stack
+
+
+def split_html(text: str, limit: int = MAX_TEXT) -> list[str]:
+    """Split a message into parts Telegram will accept, each one valid HTML.
+
+    Paragraphs stay whole where they fit; a paragraph that alone is too long is
+    split by line. A tag left open at a cut (a <pre> table, usually) is closed
+    at the end of that part and reopened at the start of the next."""
+    if visible_len(text) <= limit:
+        return [text]
+    pieces: list[tuple[str, str]] = []          # (separator before it, text)
+    for para in text.split("\n\n"):
+        lines = [para] if visible_len(para) <= limit else para.split("\n")
+        pieces.append(("\n\n", lines[0]))
+        pieces.extend(("\n", ln) for ln in lines[1:])
+    parts, cur = [], ""
+    for sep, piece in pieces:
+        cand = cur + sep + piece if cur else piece
+        if cur and visible_len(cand) > limit:
+            # `cur` is self-contained: it starts with any tags reopened at the
+            # previous cut, so what is still open is read from it alone.
+            still = _open_tags(cur)
+            parts.append(cur + "".join(f"</{_TAG.match(o).group(2)}>"
+                                       for o in reversed(still)))
+            cur = "".join(still) + piece
+        else:
+            cur = cand
+    if cur:
+        parts.append(cur)
+    return parts
+
+
+async def _send_one(chat_id: int, thread_id: int, text: str,
+                    silent: bool) -> tuple[dict | None, int]:
+    """One message, at most 4096 visible characters. (sent, thread it went to)."""
+    from ..telegram import bot          # late: bot imports comp.commands
 
     params = dict(chat_id=chat_id, text=text, parse_mode="HTML",
                   disable_web_page_preview=True, disable_notification=silent)
     if thread_id and thread_id > 1:
         params["message_thread_id"] = thread_id
-    sent = await call("sendMessage", **params)
+    sent, err = await bot.call_ex("sendMessage", **params)
+    if sent is None and "message_thread_id" in params and thread_gone(err):
+        # A deleted topic 400s forever. Falling back to General on every send
+        # kept the dead binding alive -- thread 3 failed every 15 minutes for
+        # days and each credit alert reached General twice. Drop the binding
+        # once, say so once, and deliver this message to General.
+        netuid = await store.topic_gone(chat_id, thread_id)
+        what = f"SN{netuid}" if netuid is not None else "the digest"
+        log.warning("chat=%s thread=%s (%s) was deleted — binding removed",
+                    chat_id, thread_id, what)
+        params.pop("message_thread_id")
+        thread_id = 0
+        await bot.call("sendMessage", chat_id=chat_id, parse_mode="HTML",
+                       disable_notification=True,
+                       text=(f"🧹 The topic for <b>{what}</b> no longer exists, so "
+                             f"its binding was removed and it will not be "
+                             f"recreated automatically."
+                             + (f"\n<code>/bind {netuid}</code> inside a topic, or "
+                                f"<code>/setup</code>, to bring it back."
+                                if netuid is not None else "")))
+        sent, err = await bot.call_ex("sendMessage", **params)
     if sent is None:
         # Never lose an event to a formatting problem: HTML that Telegram
         # rejects takes the whole message with it, so retry as plain text.
         params.pop("parse_mode", None)
         params["text"] = _strip(text)
-        sent = await call("sendMessage", **params)
-        if sent is None and "message_thread_id" in params:
-            # A deleted topic 400s forever; fall back to General so the alert
-            # is seen, and let /topics show the stale binding.
-            params.pop("message_thread_id")
-            sent = await call("sendMessage", **params)
-    return sent
+        sent = await bot.call("sendMessage", **params)
+    return sent, thread_id
+
+
+async def send_to(chat_id: int, thread_id: int, text: str,
+                  *, silent: bool = False) -> dict | None:
+    """Send to a topic (thread <= 1 is General). Returns the first part sent."""
+    first = None
+    for i, part in enumerate(split_html(text)):
+        sent, thread_id = await _send_one(chat_id, thread_id, part, silent)
+        if i == 0:
+            first = sent
+    return first
 
 
 def _strip(text: str) -> str:
-    import re
     return re.sub(r"<[^>]+>", "", text)
 
 

@@ -20,7 +20,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app import db                                    # noqa: E402
-from app.comp import commands, router, store          # noqa: E402
+from app.comp import commands, router, store, topics  # noqa: E402
 from app.telegram import bot                          # noqa: E402
 
 CHAT = -999_000_111          # a chat id no real group can collide with
@@ -47,9 +47,11 @@ async def main() -> int:
     bot.call = fake_call
     commands.call = fake_call          # imported inside the branch, but be safe
     router.send_to = fake_send
+    topics.CREATE_GAP_S = 0            # /setup paces real creations; not here
 
     async def reset():
         await db.pool().execute("DELETE FROM comp_topic WHERE chat_id=$1", CHAT)
+        await db.pool().execute("DELETE FROM comp_topic_skip WHERE chat_id=$1", CHAT)
 
     # --- 1. General starts as the digest, as /setup leaves it -----------------
     await reset()

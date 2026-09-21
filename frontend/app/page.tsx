@@ -590,7 +590,7 @@ export default function Overview() {
             </span>
           </div>
           <DataTable rows={out} cols={cols} initialSort="emission_share" onReorder={reorderCol}
-                     rowKey={(r) => r.netuid} maxHeight={720} tieBreak={(r) => r.netuid} />
+                     rowKey={(r) => r.netuid} maxHeight={720} tieBreak={(r) => r.netuid} rowNumbers />
         </div>
       </div>
     </Chrome>

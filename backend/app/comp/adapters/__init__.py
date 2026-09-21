@@ -7,6 +7,10 @@ minutes and log a failure each time.
 
 Live: SN15 SN49 SN62 SN67 SN91 SN98 SN100 SN114.
 
+Every other subnet one of our coldkeys holds a UID on gets a ChainAdapter at
+runtime (see refresh() below): the same topic, commands and generic alerts,
+from our own chain tables. Writing a real adapter replaces it.
+
 Scaffolded, NOT yet active -- each still points at the template's placeholder
 URL, so registering one before its snapshot() is filled in would poll a dead
 host every few minutes and log a failure each time:
@@ -36,10 +40,42 @@ from .sn98 import SN98
 
 ADAPTERS: dict[int, SubnetAdapter] = {a.netuid: a for a in (SN15(), SN49(), SN62(), SN67(), SN91(), SN98(), SN100(), SN114())}
 
+# Chain-only adapters, added at runtime for every subnet that has our UIDs or a
+# bound topic but no adapter above. See ../chain_adapter.py.
+CHAIN: dict[int, SubnetAdapter] = {}
+
 
 def get(netuid: int) -> SubnetAdapter | None:
-    return ADAPTERS.get(netuid)
+    return ADAPTERS.get(netuid) or CHAIN.get(netuid)
 
 
 def all_adapters() -> list[SubnetAdapter]:
-    return sorted(ADAPTERS.values(), key=lambda a: a.netuid)
+    return sorted([*ADAPTERS.values(), *CHAIN.values()], key=lambda a: a.netuid)
+
+
+def ensure_chain(netuid: int, label: str) -> SubnetAdapter:
+    """The adapter for a subnet, creating a chain-only one if none exists."""
+    ad = get(netuid)
+    if ad is None:
+        from ..chain_adapter import ChainAdapter
+        ad = CHAIN[netuid] = ChainAdapter(netuid, label)
+    return ad
+
+
+async def refresh() -> list[SubnetAdapter]:
+    """Add a chain adapter for every held or bound subnet that lacks one.
+
+    Only ever adds. A subnet we were deregistered from keeps its adapter for the
+    life of the process, so its topic still answers and still gets alerts --
+    absence from one sweep is not a reason to stop tracking. Returns the new ones."""
+    from .. import store
+    held = await store.held_subnets()
+    wanted = dict(held)
+    for n in await store.bound_netuids():
+        if n not in wanted:
+            wanted[n] = await store.subnet_name(n) or f"subnet-{n}"
+    new = []
+    for netuid, name in sorted(wanted.items()):
+        if netuid >= 0 and get(netuid) is None:
+            new.append(ensure_chain(netuid, name))
+    return new

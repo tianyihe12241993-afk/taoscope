@@ -27,6 +27,9 @@ class Settings(BaseSettings):
 
     # telegram (long-polling, so it needs no public URL)
     telegram_bot_token: str = ""
+    # Create a forum topic for every subnet our coldkeys hold a UID on, in every
+    # linked chat that was set up with /setup. Only ever adds topics.
+    telegram_auto_topics: bool = True
 
     # competition tracking (off-chain, per-subnet dashboards)
     comp_enabled: bool = True

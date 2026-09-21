@@ -212,6 +212,8 @@ def _usd(v, d: int = 4) -> str:
 class SN62(SubnetAdapter):
     # ---- identity -----------------------------------------------------------
     netuid = 62
+    # our own deregistration alert is richer than the generic one
+    covers = frozenset({"dereg"})
     slug = "ridges"
     label = "Ridges"
 

@@ -11,11 +11,13 @@ DM or an unbound topic.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
-from . import poller, router, store
-from .adapters import all_adapters, get as get_adapter
-from .base import chain_block, SEVERITY, esc
+from . import poller, router, store, topics
+from .adapters import all_adapters, ensure_chain, get as get_adapter, refresh
+from .base import (GENERIC_ALERTS, SEVERITY, chain_block, esc, ours_chain_block,
+                   ours_line)
 
 log = logging.getLogger("taoscope.comp.commands")
 
@@ -32,11 +34,13 @@ HELP = (
     "/poll — force a refresh now\n"
     "/mute <code>kind</code> · /unmute <code>kind</code>\n"
     "/pick — narrow this topic to the rounds you care about\n\n"
-    "<b>Setup</b>\n"
+    "<b>Setup</b> — topics for subnets our hotkeys are on are created "
+    "automatically\n"
     "/setup — create + bind a topic per tracked subnet\n"
-    "/bind <code>100</code> — bind THIS topic to a subnet\n"
+    "/bind <code>100</code> — bind THIS topic to a subnet (any netuid)\n"
     "/bind <code>digest</code> — make this the cross-subnet topic\n"
-    "/unbind · /topics"
+    "/unbind — stop routing here (and stop auto-creating it)\n"
+    "/topics — every binding, and held subnets with no topic"
 )
 
 COMMANDS = {"state", "info", "board", "mine", "watch", "unwatch", "poll", "guide",
@@ -99,10 +103,14 @@ async def handle(chat_id: int, thread_id: int, cmd: str, arg: str,
         netuid = int(a)
         ad = get_adapter(netuid)
         if ad is None:
-            await _reply(chat_id, thread_id,
-                         f"No adapter for SN{netuid}. Tracked: " +
-                         ", ".join(str(x.netuid) for x in all_adapters()))
-            return True
+            # Any subnet on chain can have a topic: without an adapter it gets
+            # the chain view, the same as every subnet we hold a UID on.
+            name = await store.subnet_name(netuid)
+            if name is None:
+                await _reply(chat_id, thread_id, f"SN{netuid} does not exist on chain.")
+                return True
+            ad = ensure_chain(netuid, name)
+        await store.unskip_topic(chat_id, netuid)
         # `/bind <netuid>` in GENERAL is almost never what someone means.
         #
         # General is thread 0, not a real forum topic. Binding it silently did
@@ -115,12 +123,8 @@ async def handle(chat_id: int, thread_id: int, cmd: str, arg: str,
         #
         # What they meant is "give this subnet a topic". Do that.
         if not thread_id and chat_type == "supergroup":
-            from ..telegram.bot import call
-            res = await call("createForumTopic", chat_id=chat_id,
-                             name=f"SN{netuid} · {ad.label}")
-            if res and res.get("message_thread_id"):
-                tid = res["message_thread_id"]
-                await store.bind_topic(chat_id, tid, netuid, ad.label)
+            tid = await topics.create_topic(chat_id, ad)
+            if tid:
                 # General must not keep pointing at this subnet as well, or
                 # every alert is delivered twice. It was the digest before a
                 # mis-bind put a subnet here, so put the digest back.
@@ -129,11 +133,6 @@ async def handle(chat_id: int, thread_id: int, cmd: str, arg: str,
                 if bound and cur == netuid:
                     await store.bind_topic(chat_id, 0, None, "digest")
                     restored = "\nGeneral is the cross-subnet digest again."
-                await router.send_to(
-                    chat_id, tid,
-                    f"📡 <b>SN{netuid} {esc(ad.label)}</b> is tracked here.\n"
-                    f"Try <code>/state</code>, <code>/info</code>, "
-                    f"<code>/board</code>, <code>/mine</code>.", silent=True)
                 await _reply(chat_id, thread_id,
                              f"✅ Created <b>SN{netuid} · {esc(ad.label)}</b> and "
                              f"bound it there.{restored}\n"
@@ -157,21 +156,44 @@ async def handle(chat_id: int, thread_id: int, cmd: str, arg: str,
         return True
 
     if cmd == "unbind":
+        netuid, bound = await store.netuid_for_topic(chat_id, thread_id)
         await store.unbind_topic(chat_id, thread_id)
-        await _reply(chat_id, thread_id, "Unbound. No alerts will be routed here.")
+        if netuid is not None:
+            # Remember it, or the automatic sync makes a new topic for this
+            # subnet five minutes later.
+            await store.skip_topic(chat_id, netuid, "unbind")
+            await _reply(chat_id, thread_id,
+                         f"Unbound. No SN{netuid} alerts will be routed here, and "
+                         f"no topic will be created for it automatically.\n"
+                         f"<code>/bind {netuid}</code> to undo.")
+        else:
+            await _reply(chat_id, thread_id, "Unbound. No alerts will be routed here.")
         return True
 
     if cmd == "topics":
-        rows = await store.all_topics()
+        # This chat only: other chats' thread ids mean nothing here.
+        rows = [r for r in await store.all_topics() if r["chat_id"] == chat_id]
+        held = await store.held_subnets()
         if not rows:
             await _reply(chat_id, thread_id, "Nothing bound yet. <code>/setup</code>")
             return True
         L = ["<b>Topic bindings</b>", ""]
-        for r in rows:
+        for r in sorted(rows, key=lambda r: (r["netuid"] is not None, r["netuid"] or 0)):
             what = f"SN{r['netuid']}" if r["netuid"] is not None else "digest"
+            key = "🔑 " if r["netuid"] in held else ""
             muted = [k for k, v in (r["prefs"] or {}).items() if v is False]
-            L.append(f"thread <code>{r['thread_id']}</code> → <b>{what}</b> "
-                     f"{esc(r['title'])}" + (f"  muted: {esc(muted)}" if muted else ""))
+            L.append(f"{key}<b>{what}</b> {esc(r['title'])} · thread "
+                     f"<code>{r['thread_id']}</code>"
+                     + (f"  muted: {esc(', '.join(muted))}" if muted else ""))
+        bound = {r["netuid"] for r in rows}
+        skipped = await store.skipped_topics(chat_id)
+        gap = [n for n in sorted(held) if n not in bound]
+        if gap:
+            L += ["", "<b>Our hotkeys are on these, with no topic</b>"]
+            L += [f"SN{n} {esc(held[n])}"
+                  + (" — <i>skipped (unbound or deleted)</i>" if n in skipped else "")
+                  for n in gap]
+        L += ["", "<i>🔑 = our hotkeys hold a UID there</i>"]
         await _reply(chat_id, thread_id, "\n".join(L))
         return True
 
@@ -215,9 +237,12 @@ async def handle(chat_id: int, thread_id: int, cmd: str, arg: str,
     if cmd in ("mute", "unmute"):
         kind = rest.strip()
         if not kind:
+            kinds = sorted(set(ad.alerts) | set(GENERIC_ALERTS)
+                           | set(await store.seen_kinds(ad.netuid)))
             await _reply(chat_id, thread_id,
-                         "Kinds: king_change, king_score, new_entrant, queue, "
-                         "our_run, rules, repo, emission, sealed, registration")
+                         f"<b>SN{ad.netuid} alert kinds</b>\n"
+                         + ", ".join(f"<code>{esc(k)}</code>" for k in kinds)
+                         + "\n\n<code>/mute kind</code> in this topic")
             return True
         await store.set_pref(chat_id, thread_id, kind, cmd == "unmute")
         await _reply(chat_id, thread_id,
@@ -333,7 +358,16 @@ async def handle(chat_id: int, thread_id: int, cmd: str, arg: str,
         limit = int(rest.strip()) if rest.strip().isdigit() else 10
         await _reply(chat_id, thread_id, ad.render_board(s, min(limit, 20)))
     elif cmd == "mine":
-        await _reply(chat_id, thread_id, ad.render_me(s))
+        # Every topic ends /mine with the same table of our hotkeys on chain.
+        # A chain-only adapter's view already IS that table.
+        body = ad.render_me(s)
+        extra = "" if "OUR HOTKEYS" in body else ours_chain_block(s)
+        if extra and len(body) + len(extra) < 3900:
+            await _reply(chat_id, thread_id, body + "\n\n" + extra)
+        else:
+            await _reply(chat_id, thread_id, body)
+            if extra:
+                await _reply(chat_id, thread_id, extra)
     elif cmd == "guide":
         # Posted silently and pinned: a topic's primer should be reachable from
         # the pin, not by scrolling past a week of alerts. Pinning is
@@ -355,7 +389,7 @@ async def tracked_summary() -> str:
     for ad in all_adapters():
         s = await store.last_state(ad.netuid)
         lines.append(f"• <b>SN{ad.netuid}</b> {esc(ad.label)}"
-                     + (f" — {s.get('n_board', '?')} on the board" if s else ""))
+                     + (f" — {s['n_board']} on the board" if s.get("n_board") else ""))
     return "\n".join(lines) or "• nothing yet"
 
 
@@ -390,6 +424,9 @@ async def _digest(chat_id: int, thread_id: int, *, bound: bool = True) -> None:
             ours = ad.ours_summary(s)
         except Exception:                     # a renderer must never break /state
             ours = ""
+        # An adapter with nothing on its watchlist still has something at stake
+        # if our hotkeys hold UIDs there -- say so the same way for every subnet.
+        ours = ours or ours_line(s)
         try:
             dl = ad.deadline_minutes(s)
         except Exception:
@@ -426,38 +463,30 @@ async def _digest(chat_id: int, thread_id: int, *, bound: bool = True) -> None:
 async def _setup(chat_id: int, thread_id: int, chat_type: str) -> None:
     """Create one forum topic per tracked subnet and bind it.
 
+    Tracked = every hand-written adapter plus every subnet our coldkeys hold a
+    UID on. Running /setup is an explicit request for all of them, so it also
+    clears the per-chat opt-outs left by /unbind or a deleted topic.
+
     Needs the bot to be an administrator with can_manage_topics. If topic
     creation is refused we still bind whatever exists, so a manual layout keeps
     working -- /bind in each topic is always the fallback.
     """
-    from ..telegram.bot import call
-
     if chat_type != "supergroup":
         await _reply(chat_id, thread_id,
                      "Run <code>/setup</code> inside the forum supergroup.")
         return
 
     await store.bind_topic(chat_id, thread_id, None, "digest")
+    await store.unskip_topic(chat_id)
+    await refresh()
+    wanted = topics.tracked_for_setup(await store.held_subnets())
     made, failed = [], []
-    for ad in all_adapters():
-        existing = [t for t in await store.all_topics()
-                    if t["chat_id"] == chat_id and t["netuid"] == ad.netuid]
-        if existing:
-            continue
-        res = await call("createForumTopic", chat_id=chat_id,
-                         name=f"SN{ad.netuid} · {ad.label}")
-        if not res:
+    for ad in await topics.missing(chat_id, wanted, honour_skips=False):
+        if await topics.create_topic(chat_id, ad):
+            made.append(ad.netuid)
+        else:
             failed.append(ad.netuid)
-            continue
-        tid = res["message_thread_id"]
-        await store.bind_topic(chat_id, tid, ad.netuid, ad.label)
-        await router.send_to(chat_id, tid,
-                             f"📡 <b>SN{ad.netuid} {esc(ad.label)}</b> is tracked here.\n"
-                             f"Alerts: crown changes, rule changes, repo commits, "
-                             f"our own runs.\n"
-                             f"Try <code>/state</code>, <code>/info</code>, "
-                             f"<code>/board</code>, <code>/mine</code>.", silent=True)
-        made.append(ad.netuid)
+        await asyncio.sleep(topics.CREATE_GAP_S)
 
     msg = "✅ Setup done. This topic is the digest."
     if made:

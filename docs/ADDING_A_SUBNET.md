@@ -267,6 +267,18 @@ nothing. When unsure, pick the quieter one — you can always raise it later.
 - `/state /info /board /mine /events /watch /unwatch /poll /mute` — all of them
   argument-free inside a bound topic
 - Inclusion in the cross-subnet digest via `render_digest()`
+- Our UIDs on chain as `_ours_chain` in every snapshot: the `🔑 OURS` line in
+  `/state`, the `🔑 OUR HOTKEYS` table after `/mine`, and the `our_earning` alert
+  when everything we hold stops (or starts) earning
+- Deregistration (`my_miners`) and top-earner (`king_change`) alerts from the
+  chain sweep, routed into this subnet's topic. If `diff()` already reports our
+  deregistrations in richer words, set `covers = frozenset({"dereg"})` so the
+  generic one is not sent too
+
+Until an adapter exists, a subnet we hold a UID on is tracked by
+`app/comp/chain_adapter.py` — same topic, same commands, chain data only.
+Registering a real adapter replaces it on the next restart; the topic binding
+is keyed by netuid, so nothing in the group changes.
 
 ## Renderer constraints
 
