@@ -298,7 +298,6 @@ def ours_chain_block(s: dict, limit: int = 40) -> str:
 # Alerts every subnet topic gets from the framework, whatever its adapter.
 GENERIC_ALERTS = {
     "registration": "registration opened or closed on chain",
-    "operators": "someone burn-registered — new operators precede new submissions",
     "our_earning": "all of our UIDs here stopped earning, or started again",
     "my_miners": "one of our UIDs was deregistered (taken by another hotkey)",
     "king_change": "a different coldkey became this subnet's top earner",

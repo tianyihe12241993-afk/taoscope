@@ -66,24 +66,11 @@ def _diff_chain(old: dict, new: dict) -> list[CompEvent]:
             dedup_key=str(opened),
         ))
 
-    # Operator growth, free for every subnet. A competitor must burn-register
-    # before they can submit, so this is the earliest PUBLIC sign a field is
-    # growing -- and on subnets whose in-flight rosters are private (SN98: 403)
-    # it is the only one. Only growth is reported: a operator leaving is not
-    # something anyone needs woken for.
-    try:
-        was, now = int(o.get("unique_coldkeys") or 0), int(n.get("unique_coldkeys") or 0)
-    except (TypeError, ValueError):
-        was = now = 0
-    if now > was > 0:
-        out.append(CompEvent(
-            kind="operators", severity="info", icon="👥",
-            title=f"👥 +{now - was} operator(s) registered",
-            body=f"{was} → <b>{now}</b> operators · "
-                 f"{n.get('num_uids')}/{n.get('max_uids')} uids\n"
-                 f"<i>new registrations precede new submissions</i>",
-            dedup_key=str(now),
-        ))
+    # Operator growth is deliberately NOT alerted (removed 2026-09-24 at the
+    # user's request). A registration count ticking 164 -> 166 asks nothing of
+    # anyone: it fired on every subnet, several times a day, and nothing was
+    # done differently because of it. The count is still on the /sn panel for
+    # whoever wants to look. Do not re-add it as a push alert.
     return out
 
 
